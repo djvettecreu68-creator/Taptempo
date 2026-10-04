@@ -1,0 +1,764 @@
+name: Construire l'APK Tap Tempo
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Générer le projet Android
+        run: |
+          mkdir -p "$(dirname "app/build.gradle")"
+          cat > 'app/build.gradle' <<'TT_EOF_0'
+          plugins { id 'com.android.application' }
+
+          android {
+              namespace 'fr.taptempo.casque'
+              compileSdk 34
+              defaultConfig {
+                  applicationId 'fr.taptempo.casque'
+                  minSdk 29
+                  targetSdk 34
+                  versionCode((System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger())
+                  versionName "1.${System.getenv('GITHUB_RUN_NUMBER') ?: '0'}"
+              }
+              signingConfigs {
+                  fixed {
+                      storeFile file('tt.keystore')
+                      storePassword 'taptempo'
+                      keyAlias 'tt'
+                      keyPassword 'taptempo'
+                  }
+              }
+              buildTypes {
+                  debug { signingConfig signingConfigs.fixed }
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+
+          dependencies {
+              implementation 'androidx.webkit:webkit:1.9.0'
+          }
+          TT_EOF_0
+          mkdir -p "$(dirname "app/src/main/AndroidManifest.xml")"
+          cat > 'app/src/main/AndroidManifest.xml' <<'TT_EOF_1'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+              <application
+                  android:label="Tap Tempo"
+                  android:icon="@mipmap/ic_launcher"
+                  android:roundIcon="@mipmap/ic_launcher"
+                  android:theme="@android:style/Theme.Material.NoActionBar"
+                  android:allowBackup="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|density|uiMode">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <service
+                      android:name=".CaptureService"
+                      android:exported="false"
+                      android:foregroundServiceType="mediaProjection" />
+                  <service
+                      android:name=".NowPlayingService"
+                      android:exported="true"
+                      android:label="Tap Tempo – morceau en cours"
+                      android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+                      <intent-filter>
+                          <action android:name="android.service.notification.NotificationListenerService" />
+                      </intent-filter>
+                  </service>
+              </application>
+          </manifest>
+          TT_EOF_1
+          mkdir -p "$(dirname "app/src/main/java/fr/taptempo/casque/CaptureService.java")"
+          cat > 'app/src/main/java/fr/taptempo/casque/CaptureService.java' <<'TT_EOF_2'
+          package fr.taptempo.casque;
+
+          import android.annotation.SuppressLint;
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.PendingIntent;
+          import android.app.Service;
+          import android.content.Intent;
+          import android.content.pm.ServiceInfo;
+          import android.media.AudioAttributes;
+          import android.media.AudioFormat;
+          import android.media.AudioPlaybackCaptureConfiguration;
+          import android.media.AudioRecord;
+          import android.media.projection.MediaProjection;
+          import android.media.projection.MediaProjectionManager;
+          import android.os.Handler;
+          import android.os.IBinder;
+          import android.os.Looper;
+          import android.util.Base64;
+
+          /** Capte le son joué par les autres applis (Android 10+), même quand il sort au casque. */
+          public class CaptureService extends Service {
+              public interface Listener {
+                  void onStarted(int sampleRate);
+                  void onPcm(String b64);
+                  void onError(String msg);
+                  void onStopped();
+              }
+
+              public static volatile Listener listener;
+              public static final String EXTRA_CODE = "code", EXTRA_DATA = "data";
+              private static final String CHANNEL = "capture";
+              private static final int SR = 44100;
+
+              private MediaProjection projection;
+              private AudioRecord rec;
+              private Thread worker;
+              private volatile boolean running;
+
+              @Override public IBinder onBind(Intent i) { return null; }
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+                  NotificationManager nm = getSystemService(NotificationManager.class);
+                  nm.createNotificationChannel(new NotificationChannel(CHANNEL, "Écoute du son", NotificationManager.IMPORTANCE_LOW));
+                  PendingIntent open = PendingIntent.getActivity(this, 0,
+                          new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                          PendingIntent.FLAG_IMMUTABLE);
+                  Notification n = new Notification.Builder(this, CHANNEL)
+                          .setSmallIcon(R.drawable.ic_notif)
+                          .setContentTitle("Tap Tempo écoute le son du téléphone")
+                          .setContentText("Touche pour revenir à l’appli")
+                          .setContentIntent(open)
+                          .setOngoing(true)
+                          .build();
+                  startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
+
+                  if (running || intent == null) return START_NOT_STICKY;
+                  try {
+                      Intent data = intent.getParcelableExtra(EXTRA_DATA);
+                      begin(intent.getIntExtra(EXTRA_CODE, 0), data);
+                  } catch (Exception e) {
+                      report("Impossible de démarrer la capture (" + e.getClass().getSimpleName() + ").");
+                      stopSelf();
+                  }
+                  return START_NOT_STICKY;
+              }
+
+              @SuppressLint("MissingPermission")
+              private void begin(int code, Intent data) {
+                  MediaProjectionManager mpm = getSystemService(MediaProjectionManager.class);
+                  projection = mpm.getMediaProjection(code, data);
+                  if (projection == null) throw new IllegalStateException("projection");
+                  projection.registerCallback(new MediaProjection.Callback() {
+                      @Override public void onStop() { stopSelf(); }
+                  }, new Handler(Looper.getMainLooper()));
+
+                  AudioPlaybackCaptureConfiguration cfg = new AudioPlaybackCaptureConfiguration.Builder(projection)
+                          .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                          .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                          .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+                          .build();
+                  AudioFormat fmt = new AudioFormat.Builder()
+                          .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                          .setSampleRate(SR)
+                          .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                          .build();
+                  int min = AudioRecord.getMinBufferSize(SR, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+                  rec = new AudioRecord.Builder()
+                          .setAudioFormat(fmt)
+                          .setBufferSizeInBytes(Math.max(min * 4, 32768))
+                          .setAudioPlaybackCaptureConfig(cfg)
+                          .build();
+                  if (rec.getState() != AudioRecord.STATE_INITIALIZED) throw new IllegalStateException("AudioRecord");
+                  rec.startRecording();
+                  running = true;
+                  Listener l = listener;
+                  if (l != null) l.onStarted(SR);
+                  worker = new Thread(this::loop, "capture");
+                  worker.start();
+              }
+
+              private void loop() {
+                  short[] buf = new short[1024];
+                  byte[] bytes = new byte[2048];
+                  while (running) {
+                      int n = rec.read(buf, 0, buf.length);
+                      if (n < 0) break;
+                      if (n == 0) continue;
+                      for (int i = 0; i < n; i++) {
+                          bytes[2 * i] = (byte) buf[i];
+                          bytes[2 * i + 1] = (byte) (buf[i] >> 8);
+                      }
+                      Listener l = listener;
+                      if (l != null) l.onPcm(Base64.encodeToString(bytes, 0, n * 2, Base64.NO_WRAP));
+                  }
+              }
+
+              private void report(String msg) {
+                  Listener l = listener;
+                  if (l != null) l.onError(msg);
+              }
+
+              @Override
+              public void onDestroy() {
+                  running = false;
+                  if (rec != null) { try { rec.stop(); } catch (Exception ignored) {} }
+                  if (worker != null) { try { worker.join(500); } catch (InterruptedException ignored) {} }
+                  if (rec != null) { rec.release(); rec = null; }
+                  if (projection != null) { MediaProjection p = projection; projection = null; p.stop(); }
+                  Listener l = listener;
+                  if (l != null) l.onStopped();
+                  super.onDestroy();
+              }
+          }
+          TT_EOF_2
+          mkdir -p "$(dirname "app/src/main/java/fr/taptempo/casque/MainActivity.java")"
+          cat > 'app/src/main/java/fr/taptempo/casque/MainActivity.java' <<'TT_EOF_3'
+          package fr.taptempo.casque;
+
+          import android.Manifest;
+          import android.annotation.SuppressLint;
+          import android.app.Activity;
+          import android.content.ComponentName;
+          import android.content.Intent;
+          import android.content.pm.PackageManager;
+          import android.media.MediaMetadata;
+          import android.media.audiofx.Visualizer;
+          import android.media.session.MediaController;
+          import android.media.session.MediaSessionManager;
+          import android.media.session.PlaybackState;
+          import android.media.projection.MediaProjectionConfig;
+          import android.media.projection.MediaProjectionManager;
+          import android.net.Uri;
+          import android.os.Build;
+          import android.os.Bundle;
+          import android.os.Handler;
+          import android.os.Looper;
+          import android.provider.Settings;
+          import android.util.Base64;
+          import android.view.WindowManager;
+          import android.webkit.JavascriptInterface;
+          import android.webkit.PermissionRequest;
+          import android.webkit.ValueCallback;
+          import android.webkit.WebChromeClient;
+          import android.webkit.WebResourceRequest;
+          import android.webkit.WebResourceResponse;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+
+          import androidx.webkit.WebViewAssetLoader;
+
+          import org.json.JSONArray;
+          import org.json.JSONObject;
+
+          import java.io.ByteArrayOutputStream;
+          import java.io.InputStream;
+          import java.net.HttpURLConnection;
+          import java.net.URL;
+          import java.net.URLEncoder;
+          import java.nio.charset.StandardCharsets;
+          import java.util.ArrayList;
+          import java.util.List;
+
+          public class MainActivity extends Activity implements CaptureService.Listener {
+              private static final int REQ_PERM_CAPTURE = 1, REQ_PERM_MIC = 2, REQ_PROJECTION = 3, REQ_FILE = 4;
+              private static final String START_URL = "https://appassets.androidplatform.net/assets/index.html";
+
+              private WebView web;
+              private final Handler ui = new Handler(Looper.getMainLooper());
+              private PermissionRequest pendingWebPerm;
+              private ValueCallback<Uri[]> fileCb;
+              private boolean started;
+
+              // Visualiseur (mélange final du téléphone)
+              private Visualizer vis;
+
+              // Morceau en cours
+              private MediaSessionManager msm;
+              private MediaController ctl;
+              private volatile String lastKey = "";
+              private volatile String previewB64;
+
+              @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
+              @Override
+              protected void onCreate(Bundle state) {
+                  super.onCreate(state);
+                  getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                  getWindow().setStatusBarColor(0xFF262D33);
+                  getWindow().setNavigationBarColor(0xFF262D33);
+                  final WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
+                          .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
+                          .build();
+
+                  web = new WebView(this);
+                  setContentView(web);
+                  WebSettings s = web.getSettings();
+                  s.setJavaScriptEnabled(true);
+                  s.setDomStorageEnabled(true);
+                  s.setMediaPlaybackRequiresUserGesture(false);
+                  s.setAllowFileAccess(false);
+
+                  web.setWebViewClient(new WebViewClient() {
+                      @Override
+                      public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest r) {
+                          return loader.shouldInterceptRequest(r.getUrl());
+                      }
+                  });
+
+                  web.setWebChromeClient(new WebChromeClient() {
+                      @Override
+                      public void onPermissionRequest(final PermissionRequest req) {
+                          ui.post(() -> {
+                              if (hasMic()) {
+                                  req.grant(req.getResources());
+                              } else {
+                                  pendingWebPerm = req;
+                                  requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQ_PERM_MIC);
+                              }
+                          });
+                      }
+
+                      @Override
+                      public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams p) {
+                          if (fileCb != null) fileCb.onReceiveValue(null);
+                          fileCb = cb;
+                          Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                          i.addCategory(Intent.CATEGORY_OPENABLE);
+                          i.setType("audio/*");
+                          try {
+                              startActivityForResult(Intent.createChooser(i, "Choisir un morceau"), REQ_FILE);
+                          } catch (Exception e) {
+                              fileCb = null;
+                              return false;
+                          }
+                          return true;
+                      }
+                  });
+
+                  web.addJavascriptInterface(new Bridge(), "TTNative");
+                  CaptureService.listener = this;
+                  web.loadUrl(START_URL);
+              }
+
+              /** Appelé depuis le JavaScript de la page. */
+              class Bridge {
+                  @JavascriptInterface
+                  public void start() { ui.post(MainActivity.this::beginCapture); }
+
+                  @JavascriptInterface
+                  public void stop() {
+                      ui.post(() -> stopService(new Intent(MainActivity.this, CaptureService.class)));
+                  }
+
+                  @JavascriptInterface
+                  public String preview() {
+                      String p = previewB64;
+                      return p == null ? "" : p;
+                  }
+
+                  @JavascriptInterface
+                  public void notifSettings() {
+                      ui.post(() -> {
+                          try {
+                              startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
+                          } catch (Exception e) {
+                              startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                      Uri.parse("package:" + getPackageName())));
+                          }
+                      });
+                  }
+              }
+
+              private boolean hasMic() {
+                  return checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+              }
+
+              private void beginCapture() {
+                  started = true;
+                  List<String> need = new ArrayList<>();
+                  if (!hasMic()) need.add(Manifest.permission.RECORD_AUDIO);
+                  if (Build.VERSION.SDK_INT >= 33
+                          && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                      need.add(Manifest.permission.POST_NOTIFICATIONS);
+                  }
+                  if (!need.isEmpty()) {
+                      requestPermissions(need.toArray(new String[0]), REQ_PERM_CAPTURE);
+                      return;
+                  }
+                  startVisualizer();
+                  startMeta();
+                  askProjection();
+              }
+
+              private void askProjection() {
+                  MediaProjectionManager mpm = getSystemService(MediaProjectionManager.class);
+                  Intent i = Build.VERSION.SDK_INT >= 34
+                          ? mpm.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
+                          : mpm.createScreenCaptureIntent();
+                  try {
+                      startActivityForResult(i, REQ_PROJECTION);
+                  } catch (Exception e) {
+                      onError("Ce téléphone refuse la capture HD.");
+                  }
+              }
+
+              /* ---------- Visualiseur ---------- */
+              private void startVisualizer() {
+                  if (vis != null || !hasMic()) return;
+                  try {
+                      Visualizer v = new Visualizer(0);
+                      v.setEnabled(false);
+                      int[] range = Visualizer.getCaptureSizeRange();
+                      v.setCaptureSize(Math.max(range[0], Math.min(1024, range[1])));
+                      v.setScalingMode(Visualizer.SCALING_MODE_NORMALIZED);
+                      v.setDataCaptureListener(new Visualizer.OnDataCaptureListener() {
+                          @Override
+                          public void onWaveFormDataCapture(Visualizer vz, byte[] wave, int samplingRate) {
+                              if (wave == null) return;
+                              js("window.__ttVis&&__ttVis('" + Base64.encodeToString(wave, Base64.NO_WRAP) + "'," + samplingRate + ")");
+                          }
+
+                          @Override
+                          public void onFftDataCapture(Visualizer vz, byte[] fft, int samplingRate) { }
+                      }, Visualizer.getMaxCaptureRate(), true, false);
+                      v.setEnabled(true);
+                      vis = v;
+                      js("window.__ttVisState&&__ttVisState(true)");
+                  } catch (Throwable e) {
+                      vis = null;
+                      js("window.__ttVisState&&__ttVisState(false)");
+                  }
+              }
+
+              private void stopVisualizer() {
+                  if (vis != null) {
+                      try { vis.setEnabled(false); vis.release(); } catch (Throwable ignored) { }
+                      vis = null;
+                  }
+              }
+
+              /* ---------- Morceau en cours ---------- */
+              private boolean listenerEnabled() {
+                  String flat = Settings.Secure.getString(getContentResolver(), "enabled_notification_listeners");
+                  return flat != null && flat.contains(getPackageName());
+              }
+
+              private final MediaController.Callback ctlCb = new MediaController.Callback() {
+                  @Override public void onMetadataChanged(MediaMetadata m) { pushMeta(); }
+                  @Override public void onPlaybackStateChanged(PlaybackState s) { pushMeta(); }
+              };
+
+              private final MediaSessionManager.OnActiveSessionsChangedListener sessL = this::pickController;
+
+              private void startMeta() {
+                  if (msm != null) return;
+                  if (!listenerEnabled()) {
+                      js("window.__ttMetaPerm&&__ttMetaPerm(false)");
+                      return;
+                  }
+                  try {
+                      MediaSessionManager m = getSystemService(MediaSessionManager.class);
+                      ComponentName cn = new ComponentName(this, NowPlayingService.class);
+                      m.addOnActiveSessionsChangedListener(sessL, cn, ui);
+                      msm = m;
+                      js("window.__ttMetaPerm&&__ttMetaPerm(true)");
+                      pickController(m.getActiveSessions(cn));
+                  } catch (SecurityException e) {
+                      msm = null;
+                      js("window.__ttMetaPerm&&__ttMetaPerm(false)");
+                  }
+              }
+
+              private void pickController(List<MediaController> list) {
+                  MediaController best = null;
+                  if (list != null) {
+                      for (MediaController c : list) {
+                          PlaybackState st = c.getPlaybackState();
+                          if (st != null && st.getState() == PlaybackState.STATE_PLAYING) { best = c; break; }
+                          if (best == null) best = c;
+                      }
+                  }
+                  if (ctl != null) ctl.unregisterCallback(ctlCb);
+                  ctl = best;
+                  if (ctl != null) ctl.registerCallback(ctlCb, ui);
+                  pushMeta();
+              }
+
+              private void pushMeta() {
+                  MediaController c = ctl;
+                  if (c == null) return;
+                  MediaMetadata m = c.getMetadata();
+                  if (m == null) return;
+                  String title = m.getString(MediaMetadata.METADATA_KEY_TITLE);
+                  String artist = m.getString(MediaMetadata.METADATA_KEY_ARTIST);
+                  if (artist == null) artist = m.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST);
+                  if (title == null || title.isEmpty()) return;
+                  if (artist == null) artist = "";
+                  PlaybackState st = c.getPlaybackState();
+                  boolean playing = st != null && st.getState() == PlaybackState.STATE_PLAYING;
+                  js("window.__ttMeta&&__ttMeta(" + JSONObject.quote(title) + "," + JSONObject.quote(artist) + ","
+                          + JSONObject.quote(c.getPackageName()) + "," + playing + ")");
+                  String key = artist + "|" + title;
+                  if (!key.equals(lastKey)) {
+                      lastKey = key;
+                      previewB64 = null;
+                      lookup(artist, title, key);
+                  }
+              }
+
+              private static String clean(String s) {
+                  return s.replaceAll("(?i)\\s*[\\(\\[](feat|ft|with|remaster|live|radio edit)[^\\)\\]]*[\\)\\]]", "")
+                          .replaceAll("(?i)\\s+-\\s+.*(remaster|version|edit|mix).*$", "")
+                          .replace("\"", "").trim();
+              }
+
+              private void lookup(final String artist, final String title, final String key) {
+                  new Thread(() -> {
+                      try {
+                          String a = clean(artist), t = clean(title);
+                          String q = (a.isEmpty() ? "" : "artist:\"" + a + "\" ") + "track:\"" + t + "\"";
+                          JSONObject res = getJson("https://api.deezer.com/search?limit=5&q=" + URLEncoder.encode(q, "UTF-8"));
+                          JSONArray data = res.optJSONArray("data");
+                          if (data == null || data.length() == 0) {
+                              res = getJson("https://api.deezer.com/search?limit=5&q=" + URLEncoder.encode((a + " " + t).trim(), "UTF-8"));
+                              data = res.optJSONArray("data");
+                          }
+                          if (data == null || data.length() == 0) { sendRef(key, null); return; }
+                          JSONObject tr = data.getJSONObject(0);
+                          JSONObject full = getJson("https://api.deezer.com/track/" + tr.getLong("id"));
+                          double bpm = full.optDouble("bpm", 0);
+                          if (Double.isNaN(bpm) || Double.isInfinite(bpm)) bpm = 0;
+                          String preview = tr.optString("preview", "");
+                          byte[] mp3 = preview.isEmpty() ? null : getBytes(preview);
+                          if (!key.equals(lastKey)) return;
+                          previewB64 = mp3 == null ? null : Base64.encodeToString(mp3, Base64.NO_WRAP);
+                          JSONObject o = new JSONObject();
+                          o.put("title", tr.optString("title", t));
+                          JSONObject ar = tr.optJSONObject("artist");
+                          o.put("artist", ar != null ? ar.optString("name", a) : a);
+                          o.put("bpm", bpm);
+                          o.put("preview", mp3 != null);
+                          sendRef(key, o.toString());
+                      } catch (Exception e) {
+                          sendRef(key, null);
+                      }
+                  }, "deezer").start();
+              }
+
+              private void sendRef(String key, String json) {
+                  if (!key.equals(lastKey)) return;
+                  js("window.__ttRef&&__ttRef(" + (json == null ? "null" : json) + ")");
+              }
+
+              private static byte[] getBytes(String url) throws Exception {
+                  HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+                  c.setConnectTimeout(8000);
+                  c.setReadTimeout(15000);
+                  c.setRequestProperty("User-Agent", "TapTempo/1.0 (Android)");
+                  try (InputStream in = c.getInputStream()) {
+                      ByteArrayOutputStream out = new ByteArrayOutputStream();
+                      byte[] b = new byte[16384];
+                      int n;
+                      while ((n = in.read(b)) > 0) {
+                          out.write(b, 0, n);
+                          if (out.size() > 4_000_000) break;
+                      }
+                      return out.toByteArray();
+                  } finally {
+                      c.disconnect();
+                  }
+              }
+
+              private static JSONObject getJson(String url) throws Exception {
+                  return new JSONObject(new String(getBytes(url), StandardCharsets.UTF_8));
+              }
+
+              /* ---------- Permissions et résultats ---------- */
+              @Override
+              public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
+                  if (code == REQ_PERM_MIC) {
+                      if (pendingWebPerm != null) {
+                          if (hasMic()) pendingWebPerm.grant(pendingWebPerm.getResources());
+                          else pendingWebPerm.deny();
+                          pendingWebPerm = null;
+                      }
+                  } else if (code == REQ_PERM_CAPTURE) {
+                      startMeta();
+                      if (hasMic()) {
+                          startVisualizer();
+                          askProjection();
+                      } else {
+                          onError("Autorise le micro : Android l’exige pour capter le son des applis.");
+                      }
+                  }
+              }
+
+              @Override
+              protected void onActivityResult(int code, int result, Intent data) {
+                  if (code == REQ_FILE) {
+                      if (fileCb != null) {
+                          fileCb.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result, data));
+                          fileCb = null;
+                      }
+                      return;
+                  }
+                  if (code == REQ_PROJECTION) {
+                      if (result != RESULT_OK || data == null) {
+                          onError("Son HD refusé (le visualiseur reste actif). Touche l’afficheur pour réessayer.");
+                          return;
+                      }
+                      Intent s = new Intent(this, CaptureService.class)
+                              .putExtra(CaptureService.EXTRA_CODE, result)
+                              .putExtra(CaptureService.EXTRA_DATA, data);
+                      startForegroundService(s);
+                      return;
+                  }
+                  super.onActivityResult(code, result, data);
+              }
+
+              @Override
+              protected void onResume() {
+                  super.onResume();
+                  if (started) {
+                      startMeta();
+                      startVisualizer();
+                  }
+              }
+
+              private void js(final String code) {
+                  ui.post(() -> { if (web != null) web.evaluateJavascript(code, null); });
+              }
+
+              @Override public void onStarted(int sampleRate) { js("window.__ttCaptureStarted&&__ttCaptureStarted(" + sampleRate + ")"); }
+              @Override public void onPcm(String b64) { js("window.__ttPcm&&__ttPcm('" + b64 + "')"); }
+              @Override public void onError(String msg) { js("window.__ttCaptureError&&__ttCaptureError(" + JSONObject.quote(msg) + ")"); }
+              @Override public void onStopped() { js("window.__ttCaptureStopped&&__ttCaptureStopped()"); }
+
+              @Override
+              public void onBackPressed() {
+                  if (web != null && web.canGoBack()) web.goBack();
+                  else super.onBackPressed();
+              }
+
+              @Override
+              protected void onDestroy() {
+                  if (CaptureService.listener == this) CaptureService.listener = null;
+                  if (isFinishing()) stopService(new Intent(this, CaptureService.class));
+                  stopVisualizer();
+                  if (msm != null) { try { msm.removeOnActiveSessionsChangedListener(sessL); } catch (Exception ignored) { } msm = null; }
+                  if (ctl != null) { ctl.unregisterCallback(ctlCb); ctl = null; }
+                  if (web != null) { web.destroy(); web = null; }
+                  super.onDestroy();
+              }
+          }
+          TT_EOF_3
+          mkdir -p "$(dirname "app/src/main/java/fr/taptempo/casque/NowPlayingService.java")"
+          cat > 'app/src/main/java/fr/taptempo/casque/NowPlayingService.java' <<'TT_EOF_4'
+          package fr.taptempo.casque;
+
+          import android.service.notification.NotificationListenerService;
+
+          /** Ne lit rien lui-même : sa présence autorise l'appli à connaître le morceau en cours (titre, artiste). */
+          public class NowPlayingService extends NotificationListenerService {
+          }
+          TT_EOF_4
+          mkdir -p "$(dirname "app/src/main/res/drawable/ic_fg.xml")"
+          cat > 'app/src/main/res/drawable/ic_fg.xml' <<'TT_EOF_5'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <group android:translateX="29.6" android:translateY="29.6" android:scaleX="2.03" android:scaleY="2.03">
+                  <path android:fillColor="#FFA528" android:pathData="M12,1c-4.97,0 -9,4.03 -9,9v7c0,1.66 1.34,3 3,3h3v-8H5v-2c0,-3.87 3.13,-7 7,-7s7,3.13 7,7v2h-4v8h3c1.66,0 3,-1.34 3,-3v-7c0,-4.97 -4.03,-9 -9,-9z" />
+              </group>
+          </vector>
+          TT_EOF_5
+          mkdir -p "$(dirname "app/src/main/res/drawable/ic_notif.xml")"
+          cat > 'app/src/main/res/drawable/ic_notif.xml' <<'TT_EOF_6'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp" android:height="24dp"
+              android:viewportWidth="24" android:viewportHeight="24">
+              <path android:fillColor="#FFFFFFFF" android:pathData="M12,1c-4.97,0 -9,4.03 -9,9v7c0,1.66 1.34,3 3,3h3v-8H5v-2c0,-3.87 3.13,-7 7,-7s7,3.13 7,7v2h-4v8h3c1.66,0 3,-1.34 3,-3v-7c0,-4.97 -4.03,-9 -9,-9z" />
+          </vector>
+          TT_EOF_6
+          mkdir -p "$(dirname "app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml")"
+          cat > 'app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml' <<'TT_EOF_7'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@color/ic_bg" />
+              <foreground android:drawable="@drawable/ic_fg" />
+          </adaptive-icon>
+          TT_EOF_7
+          mkdir -p "$(dirname "app/src/main/res/values/colors.xml")"
+          cat > 'app/src/main/res/values/colors.xml' <<'TT_EOF_8'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <color name="ic_bg">#262D33</color>
+          </resources>
+          TT_EOF_8
+          mkdir -p "$(dirname "build.gradle")"
+          cat > 'build.gradle' <<'TT_EOF_9'
+          plugins { id 'com.android.application' version '8.5.2' apply false }
+          TT_EOF_9
+          mkdir -p "$(dirname "gradle.properties")"
+          cat > 'gradle.properties' <<'TT_EOF_10'
+          android.useAndroidX=true
+          org.gradle.jvmargs=-Xmx2048m
+          TT_EOF_10
+          mkdir -p "$(dirname "settings.gradle")"
+          cat > 'settings.gradle' <<'TT_EOF_11'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = 'TapTempo'
+          include ':app'
+          TT_EOF_11
+          echo "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" | base64 -d > app/tt.keystore
+          mkdir -p app/src/main/assets
+          cp index.html app/src/main/assets/index.html
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Compiler
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Publier l'APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk TapTempo.apk
+          gh release create "v${{ github.run_number }}" TapTempo.apk --title "Tap Tempo ${{ github.run_number }}" --notes "Télécharge TapTempo.apk sur le téléphone et installe-le." --latest
