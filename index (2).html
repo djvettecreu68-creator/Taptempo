@@ -1,0 +1,962 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#262D33">
+<title>Tap Tempo</title>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --panel:#262D33; --edge:#3A434B; --ink:#E3E8EC; --muted:#99A5AF;
+  --pad:#46525E; --pad-press:#2F3942; --pad-ink:#F1F4F6; --pad-rim:#5E6B77;
+  --screen:#16241D; --screen-ink:#9CF0AE; --screen-dim:#3F6A4E; --screen-grid:#23382C;
+  --led:#FFA528; --led-accent:#FF4A2B; --led-off:#4A433B; --clap:#6FC3FF;
+  --font:"Chakra Petch","Segoe UI",Roboto,system-ui,sans-serif;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+*,*::before,*::after{box-sizing:inherit}
+html,body{height:100%;margin:0;overflow:hidden}
+body{background:var(--panel);color:var(--ink);font-family:var(--font);-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+.app{height:100%;display:flex;flex-direction:column;gap:10px;padding:10px}
+@media (min-aspect-ratio:1/1){ .app{flex-direction:row} .screen,.pad{flex:1 1 0} }
+
+.screen{container-type:size;flex:1.25 1 0;min-height:0;display:flex;flex-direction:column;gap:6px;
+  background:var(--screen);color:var(--screen-ink);border-radius:12px;border:3px solid var(--edge);
+  padding:10px 12px 8px;box-shadow:inset 0 2px 8px rgba(0,0,0,.55)}
+.top{display:flex;justify-content:space-between;align-items:center;font-size:.8rem;opacity:.85}
+.leds{display:flex;gap:8px}
+.led{width:12px;height:12px;border-radius:50%;background:var(--led-off)}
+.led.on{background:var(--led);box-shadow:0 0 10px 2px rgba(255,165,40,.7)}
+.led.first.on{background:var(--led-accent);box-shadow:0 0 12px 3px rgba(255,74,43,.75)}
+.readout{display:flex;align-items:flex-end;justify-content:space-between;gap:8px}
+.bpm{font-size:clamp(2.2rem,min(23cqw,21cqh),10rem);font-weight:600;line-height:.9;font-variant-numeric:tabular-nums;letter-spacing:-.02em;text-shadow:0 0 12px rgba(156,240,174,.35)}
+.bpm.dim{opacity:.45;text-shadow:none}
+.bpm.empty{color:var(--screen-dim);text-shadow:none}
+.side{text-align:right;padding-bottom:4px;min-width:0;flex:1 1 auto}
+.readout .bpm{flex:0 0 auto}
+.unit{font-size:1rem;font-weight:500}
+.style{font-size:.8rem;opacity:.8;margin-top:3px}
+@container (max-width:320px){ .style{display:none} }
+.conf{height:4px;border-radius:2px;background:var(--screen-grid);overflow:hidden}
+#confBar{height:100%;width:0;background:var(--screen-ink);transition:width .3s}
+.tapline{display:flex;justify-content:space-between;font-size:.85rem;font-variant-numeric:tabular-nums;opacity:.9;min-height:1.2em}
+#graph{flex:1 1 0;min-height:40px;width:100%;display:block}
+.ref{display:flex;flex-direction:column;gap:1px}
+.ref:empty{display:none}
+.tt{font-size:.95rem;font-weight:600;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+.tt:empty{display:none}
+.ta{display:flex;gap:8px;font-size:.8rem;opacity:.85;align-items:baseline}
+#refA{flex:1 1 auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.rb{flex:0 0 auto;white-space:nowrap;font-variant-numeric:tabular-nums}
+.ref.link .tt{color:var(--led);text-decoration:underline}
+.confrow{display:flex;align-items:center;gap:8px;font-size:.8rem;font-variant-numeric:tabular-nums}
+.confrow .conf{flex:1 1 auto}
+#confLbl{white-space:nowrap}
+.topr{display:flex;align-items:center;gap:10px}
+.reg{font:inherit;font-size:.75rem;font-weight:700;letter-spacing:.06em;line-height:1;padding:4px 9px;min-height:22px;border-radius:999px;
+  border:1.5px solid currentColor;background:rgba(0,0,0,.25);color:var(--screen-dim);cursor:pointer;touch-action:manipulation}
+.reg:empty{display:none}
+.reg[data-u="1"]{border-style:dashed}
+.reg[data-r="WEST"]{color:#5EB0FF}.reg[data-r="EAST"]{color:#FF6A55}.reg[data-r="SOUTH"]{color:#FFB23E}
+.reg[data-r="MIDWEST"]{color:#7BE38A}.reg[data-r="CANADA"]{color:#F4F4F4}.reg[data-r="AUTRE"]{color:#C59BFF}
+.key{font:inherit;font-size:.75rem;font-weight:600;padding:4px 8px;min-height:22px;border-radius:999px;border:1.5px dashed var(--led);background:transparent;color:var(--led)}
+.key[hidden]{display:none}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px;z-index:9}
+.ov[hidden]{display:none}
+.box{background:var(--panel);border:2px solid var(--edge);border-radius:14px;padding:16px;width:min(420px,100%);display:flex;flex-direction:column;gap:10px;-webkit-user-select:text;user-select:text}
+.box h2{margin:0;font-size:1.05rem}
+.box p{margin:0;font-size:.85rem;opacity:.8}
+.box input{font:inherit;font-size:.95rem;padding:10px;border-radius:8px;border:2px solid var(--edge);background:var(--screen);color:var(--screen-ink);width:100%}
+.box .row{display:flex;gap:8px;justify-content:flex-end}
+.box button{font:inherit;font-size:.9rem;font-weight:600;padding:9px 14px;border-radius:8px;border:0;background:var(--pad);color:var(--pad-ink)}
+.box button.ok{background:var(--led);color:#1b1b1b}
+#keyMsg{min-height:1.2em;font-size:.85rem}
+.msg{font-size:.75rem;opacity:.75;min-height:1.1em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.msg.warn{color:var(--led);opacity:1}
+
+.pad{flex:1 1 0;min-height:0;width:100%;border:0;border-radius:14px;background:var(--pad);color:var(--pad-ink);
+  font:inherit;font-size:1.5rem;font-weight:600;box-shadow:inset 0 0 0 4px var(--pad-rim),0 5px 0 var(--edge);
+  touch-action:manipulation;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px}
+.pad small{font-size:.8rem;font-weight:400;opacity:.65}
+.pad.hit{background:var(--pad-press);box-shadow:inset 0 0 0 4px var(--led),0 1px 0 var(--edge)}
+</style>
+</head>
+<body>
+<div class="app">
+  <section class="screen" id="screen" aria-live="polite">
+    <div class="top"><span id="src">Démarrage</span><div class="topr"><button class="key" id="keyBtn" type="button" hidden>🔑 Clé Last.fm</button><button class="reg" id="reg" type="button" aria-label="Région du rap (touche pour corriger)"></button><div class="leds" aria-hidden="true"><i class="led first" id="l0"></i><i class="led" id="l1"></i><i class="led" id="l2"></i><i class="led" id="l3"></i></div></div></div>
+    <div class="readout">
+      <div id="bpm" class="bpm empty">---.-</div>
+      <div class="side"><div class="unit">BPM</div><div class="style" id="style"></div></div>
+    </div>
+    <div class="confrow"><span id="confLbl">Fiabilité –</span><div class="conf"><div id="confBar"></div></div></div>
+    <div class="ref" id="ref"><div class="tt" id="refT"></div><div class="ta"><span id="refA"></span><span class="rb" id="refB"></span></div></div>
+    <div class="tapline"><span id="tapTxt"></span><span id="gapTxt"></span></div>
+    <canvas id="graph" aria-hidden="true"></canvas>
+    <div class="msg" id="msg">Démarrage…</div>
+  </section>
+  <div class="ov" id="keyOv" hidden><div class="box">
+    <h2>Clé Last.fm</h2>
+    <p>Colle ici ton « API key » (32 caractères). Elle reste dans ce téléphone.</p>
+    <input id="keyIn" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ex. 1a2b3c…">
+    <div id="keyMsg"></div>
+    <div class="row"><button type="button" id="keyCancel">Annuler</button><button type="button" class="ok" id="keySave">Enregistrer</button></div>
+  </div></div>
+  <button class="pad" id="pad" type="button">Tap<small>au rythme de la musique</small></button>
+</div>
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const N = 1024, HOP = 256, WIN = 12, VIS_FPS = 20;
+  // Plage d'une octave : elle décide si un morceau s'affiche 72 ou 144. Appui long sur l'afficheur pour changer.
+  const RANGES = [[68, 136, 'Rap, drill, RnB'], [90, 180, 'Électro, house'], [55, 110, 'RnB lent']];
+  let rIdx = 0; try { rIdx = Math.min(RANGES.length - 1, Math.max(0, parseInt(localStorage.getItem('tt-range'), 10) || 0)); } catch (_) {}
+  let LO = RANGES[rIdx][0], HI = RANGES[rIdx][1];
+  const inRange = x => { if (!x) return x; while (x < LO) x *= 2; while (x >= HI) x /= 2; return x; };
+  const refT = $('refT'), refA = $('refA'), refB = $('refB'), confLbl = $('confLbl');
+  const bpmEl = $('bpm'), styleEl = $('style'), confBar = $('confBar'), msgEl = $('msg'), refEl = $('ref'), srcEl = $('src');
+  const tapTxt = $('tapTxt'), gapTxt = $('gapTxt'), canvas = $('graph'), g = canvas.getContext('2d');
+  const leds = [0, 1, 2, 3].map(i => $('l' + i));
+  const rms = a => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * a[i]; return Math.sqrt(s / a.length); };
+  const css = () => getComputedStyle(document.documentElement);
+  const NATIVE = window.TTNative || null;
+  let lastMsg = '', holdUntil = 0;
+  function setMsg(t, warn){ if (t === lastMsg || performance.now() < holdUntil) return; lastMsg = t; msgEl.textContent = t; msgEl.classList.toggle('warn', !!warn); }
+
+  const STYLES = [
+    [60, 80, 'Downtempo, reggae'], [80, 100, 'Hip-hop, R&B'], [88, 102, 'Reggaeton'],
+    [100, 118, 'Pop, funk, disco'], [118, 130, 'House'], [125, 145, 'Techno'],
+    [130, 142, 'Trance'], [138, 150, 'Dubstep, trap'], [150, 165, 'Hardstyle'],
+    [165, 180, 'Drum & bass'], [180, 220, 'Hardcore, punk']
+  ];
+  function styleFor(v){
+    const m = STYLES.filter(([a, b]) => v >= a && v < b).map(s => s[2]);
+    return m.slice(0, 2).join(' ou ');
+  }
+
+  // FFT radix-2
+  const HANN = new Float32Array(N).map((_, i) => 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N));
+  const BITS = Math.log2(N), REV = new Uint32Array(N);
+  for (let i = 0; i < N; i++){ let r = 0; for (let b = 0; b < BITS; b++) r |= ((i >> b) & 1) << (BITS - 1 - b); REV[i] = r; }
+  const COS = new Float32Array(N / 2), SIN = new Float32Array(N / 2);
+  for (let i = 0; i < N / 2; i++){ COS[i] = Math.cos(2 * Math.PI * i / N); SIN[i] = Math.sin(2 * Math.PI * i / N); }
+  function fft(re, im){
+    for (let i = 0; i < N; i++){ const j = REV[i]; if (j > i){ let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; } }
+    for (let size = 2; size <= N; size <<= 1){
+      const half = size >> 1, step = N / size;
+      for (let i = 0; i < N; i += size){
+        for (let j = 0, k = 0; j < half; j++, k += step){
+          const a = i + j, b = a + half;
+          const tr = re[b] * COS[k] + im[b] * SIN[k], ti = im[b] * COS[k] - re[b] * SIN[k];
+          re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+        }
+      }
+    }
+  }
+
+  // Détecteur d'attaques : 36 bandes logarithmiques de 30 Hz à 10 kHz
+  function makeOnset(sr){
+    const nb = 36, fLo = 30, fHi = Math.min(10000, sr / 2 - 200), edges = [];
+    for (let b = 0; b <= nb; b++) edges.push(Math.max(1, Math.round(fLo * Math.pow(fHi / fLo, b / nb) * N / sr)));
+    for (let b = 1; b <= nb; b++) if (edges[b] <= edges[b - 1]) edges[b] = edges[b - 1] + 1;
+    const wt = new Float32Array(nb), kind = new Uint8Array(nb);
+    for (let b = 0; b < nb; b++){
+      const fc = (edges[b] + edges[b + 1]) / 2 * sr / N;
+      wt[b] = fc < 180 ? 1.6 : fc < 2000 ? 1 : 0.8;
+      kind[b] = fc < 150 ? 1 : (fc > 1000 && fc < 6000) ? 2 : 0;   // 1 = DOUM, 2 = CLAC
+    }
+    const buf = new Float32Array(N), re = new Float32Array(N), im = new Float32Array(N), prev = new Float32Array(nb);
+    const norm = 2 / (N / 2);
+    let first = true;
+    return samples => {
+      if (samples.length === HOP){ buf.copyWithin(0, HOP); buf.set(samples, N - HOP); }
+      else { buf.fill(0); const L = Math.min(N, samples.length); buf.set(samples.subarray(samples.length - L), N - L); }
+      for (let i = 0; i < N; i++){ re[i] = buf[i] * HANN[i]; im[i] = 0; }
+      fft(re, im);
+      let flux = 0, kick = 0, clap = 0;
+      for (let b = 0; b < nb; b++){
+        let e = 0; const a = edges[b], z = Math.min(edges[b + 1], N / 2);
+        for (let k = a; k < z; k++) e += (re[k] * re[k] + im[k] * im[k]) * norm * norm;
+        const l = Math.log1p(1e4 * e / Math.max(1, z - a));
+        if (!first){
+          const d = Math.max(0, l - prev[b]);
+          flux += wt[b] * d;
+          if (kind[b] === 1) kick += d; else if (kind[b] === 2) clap += d;
+        }
+        prev[b] = l;
+      }
+      first = false;
+      // Enveloppe de tempo : tout le spectre, avec le DOUM et le CLAC mis en avant
+      return { tempo: flux + 1.0 * kick + 0.6 * clap, kick, clap };
+    };
+  }
+
+  // Autocorrélation de l'enveloppe (détendue), normalisée
+  function acfOf(env, fps){
+    const n = env.length, maxLag = Math.round(4 * fps) + 2;
+    if (n < Math.max(fps * 3, 60)) return null;
+    const w = Math.max(1, Math.round(fps * 0.25)), ps = new Float64Array(n + 1);
+    for (let i = 0; i < n; i++) ps[i + 1] = ps[i] + env[i];
+    const x = new Float32Array(n);
+    for (let i = 0; i < n; i++){ const a = Math.max(0, i - w), b = Math.min(n, i + w + 1); x[i] = Math.max(0, env[i] - (ps[b] - ps[a]) / (b - a)); }
+    const ac = new Float64Array(maxLag + 2);
+    for (let L = 0; L <= maxLag + 1; L++){
+      if (L >= n){ ac[L] = 0; continue; }
+      let r = 0; for (let i = L; i < n; i++) r += x[i] * x[i - L];
+      ac[L] = r / (n - L);
+    }
+    const z = ac[0] || 1; for (let L = 0; L < ac.length; L++) ac[L] /= z;
+    return { ac, x };
+  }
+
+  // Peigne d'harmoniques sur une grille fine de 0,05 BPM
+  function scoreTempo(ac, fps, lo, hi){
+    const maxLag = ac.length - 2;
+    const at = f => { const i = Math.floor(f); if (i + 1 > maxLag || i < 1) return 0; const t = f - i; return ac[i] * (1 - t) + ac[i + 1] * t; };
+    const mid = Math.sqrt(lo * hi), step = 0.05, sc = [], raw = [];
+    let best = -Infinity, bi = 0;
+    for (let b = lo, i = 0; b <= hi + 1e-9; b += step, i++){
+      const L = 60 * fps / b;
+      const r = at(L) + 0.5 * at(2 * L) + 0.33 * at(3 * L) + 0.25 * at(4 * L);
+      const s = r * Math.exp(-0.5 * (Math.log2(b / mid) / 0.7) ** 2);
+      raw.push(r); sc.push(s); if (s > best){ best = s; bi = i; }
+    }
+    // La préférence de plage choisit le bon pic, mais la valeur exacte vient du pic brut (sans biais)
+    const win = Math.max(2, Math.round((lo + bi * step) * 0.02 / step));
+    let ri = bi;
+    for (let i = Math.max(0, bi - win); i <= Math.min(raw.length - 1, bi + win); i++) if (raw[i] > raw[ri]) ri = i;
+    let off = 0;
+    if (ri > 0 && ri < raw.length - 1){ const a = raw[ri - 1], b2 = raw[ri], c = raw[ri + 1], d = a - 2 * b2 + c; if (d < 0) off = 0.5 * (a - c) / d; }
+    const bpm = lo + (ri + off) * step;
+    const mean = sc.reduce((p, v) => p + v, 0) / sc.length;
+    const sd = Math.sqrt(sc.reduce((p, v) => p + (v - mean) ** 2, 0) / sc.length) || 1e-9;
+    const conf = Math.min(1, Math.max(0, ((best - mean) / sd - 1.5) / 3));
+    return { bpm, conf };
+  }
+
+  function phaseOf(x, fps, bpm){
+    const n = x.length, lag = 60 * fps / bpm, span = Math.min(n, Math.round(fps * 4));
+    let bestP = 0, bestS = -1;
+    for (let p = 0; p < Math.round(lag); p++){
+      let s = 0;
+      for (let k = 0; ; k++){ const i = n - 1 - p - Math.round(k * lag); if (i < n - span || i < 0) break; s += x[i]; }
+      if (s > bestS){ bestS = s; bestP = p; }
+    }
+    return bestP;
+  }
+
+  // Un coup = pic local nettement au-dessus du niveau des 1,5 dernières secondes
+  function peakAt(arr, fps, st, now){
+    const n = arr.length; if (n < fps) return false;
+    const v = arr[n - 2];
+    st.peak = Math.max(st.peak * 0.998, arr[n - 1]);     // mémoire des coups récents les plus forts
+    if (!(v > arr[n - 3] && v >= arr[n - 1])) return false;
+    if (now - st.last < 110) return false;
+    if (v < st.ratio * st.peak) return false;            // ignore les fuites (charley, kick dans les aigus…)
+    const span = Math.min(n, Math.round(fps * 1.5));
+    let m = 0, q = 0;
+    for (let i = n - span; i < n; i++){ m += arr[i]; q += arr[i] * arr[i]; }
+    m /= span; const sd = Math.sqrt(Math.max(0, q / span - m * m));
+    return v > m + 2.2 * sd && v > 0.05;
+  }
+
+  /* ----- Suivi des temps (programmation dynamique, méthode d'Ellis) ----- */
+  function normArr(a){
+    const n = a.length; let m = 0; for (let i = 0; i < n; i++) m += a[i]; m /= n || 1;
+    let q = 0; for (let i = 0; i < n; i++) q += (a[i] - m) ** 2;
+    const sd = Math.sqrt(q / (n || 1)) || 1, out = new Float32Array(n);
+    for (let i = 0; i < n; i++) out[i] = a[i] / sd;
+    return out;
+  }
+  function smoothArr(a, sigma){
+    const r = Math.max(1, Math.ceil(sigma * 2.5)), k = [];
+    let ks = 0; for (let j = -r; j <= r; j++){ const v = Math.exp(-0.5 * (j / sigma) ** 2); k.push(v); ks += v; }
+    const n = a.length, out = new Float32Array(n);
+    for (let i = 0; i < n; i++){ let s = 0; for (let j = -r; j <= r; j++){ const x = i + j; if (x >= 0 && x < n) s += a[x] * k[j + r]; } out[i] = s / ks; }
+    return out;
+  }
+  function dpBeats(o, tau, tight){
+    const n = o.length, C = new Float32Array(n), P = new Int32Array(n).fill(-1);
+    const dLo = Math.max(1, Math.round(tau / 2)), dHi = Math.round(tau * 2);
+    const pen = new Float32Array(dHi + 1);
+    for (let d = dLo; d <= dHi; d++) pen[d] = -tight * Math.log(d / tau) ** 2;
+    for (let t = 0; t < n; t++){
+      let best = -Infinity, bp = -1;
+      for (let d = dLo; d <= dHi && t - d >= 0; d++){ const v = C[t - d] + pen[d]; if (v > best){ best = v; bp = t - d; } }
+      C[t] = o[t] + (bp >= 0 ? Math.max(0, best) : 0); P[t] = best > 0 ? bp : -1;
+    }
+    let end = n - 1, bv = -Infinity;
+    for (let t = Math.max(0, n - 1 - Math.round(tau)); t < n; t++) if (C[t] > bv){ bv = C[t]; end = t; }
+    const beats = []; for (let t = end; t >= 0; t = P[t]){ beats.push(t); if (P[t] < 0) break; }
+    return beats.reverse();
+  }
+  const peakNear = (a, f, r) => { let m = 0; for (let i = Math.round(f) - r; i <= Math.round(f) + r; i++) if (i >= 0 && i < a.length && a[i] > m) m = a[i]; return m; };
+
+  function fitLine(pos){
+    const n = pos.length, mi = (n - 1) / 2, mp = pos.reduce((a, b) => a + b, 0) / n;
+    let num = 0, den = 0;
+    for (let i = 0; i < n; i++){ num += (i - mi) * (pos[i] - mp); den += (i - mi) ** 2; }
+    const b = num / den, a = mp - b * mi;
+    let q = 0; for (let i = 0; i < n; i++) q += (pos[i] - (a + b * i)) ** 2;
+    return { a, b, sd: Math.sqrt(q / n) };
+  }
+
+  // Analyse complète : tempo grossier (autocorrélation) -> temps placés un par un ->
+  // calage sur les DOUM/CLAC -> tempo fin par régression -> temps 1 de la mesure
+  function analyzeBeats(env, kEnv, cEnv, fps, ac, lo, hi){
+    const coarse = scoreTempo(ac, fps, lo, hi);
+    const tau = 60 * fps / coarse.bpm, n = env.length;
+    const kn = normArr(kEnv), cn = normArr(cEnv), en = normArr(env);
+    const mix = new Float32Array(n);
+    for (let i = 0; i < n; i++) mix[i] = en[i] + 0.5 * kn[i] + 0.3 * cn[i];
+    const o = normArr(smoothArr(mix, Math.max(1, tau / 32)));
+    let beats = dpBeats(o, tau, 100);
+    if (beats.length < 4) return { bpm: coarse.bpm, conf: coarse.conf * 0.5, last: null, bar: 0, coarse };
+
+    // Temps ou contretemps ? Les DOUM et CLAC tombent sur les temps
+    let on = 0, off = 0;
+    for (const b of beats){ on += peakNear(kn, b, 2) + peakNear(cn, b, 2); off += peakNear(kn, b + tau / 2, 2) + peakNear(cn, b + tau / 2, 2); }
+    if (off > on * 1.25) beats = beats.map(b => b + tau / 2).filter(b => b < n - 1);
+
+    // Position fine de chaque temps (sous la trame)
+    const pos = beats.map(b => {
+      let m = Math.round(b), mv = -Infinity;
+      for (let i = Math.round(b) - 2; i <= Math.round(b) + 2; i++) if (i > 0 && i < n - 1 && o[i] > mv){ mv = o[i]; m = i; }
+      const a = o[m - 1] ?? 0, c = o[m + 1] ?? 0, d = a - 2 * o[m] + c;
+      return d < 0 ? m + 0.5 * (a - c) / d : m;
+    });
+    const use = pos.length > 6 ? pos.slice(1) : pos;      // le premier temps est souvent imprécis
+    const f = fitLine(use);
+    let bpm = 60 * fps / f.b;
+    if (!(bpm > lo * 0.9 && bpm < hi * 1.1) || Math.abs(bpm / coarse.bpm - 1) > 0.04) bpm = coarse.bpm;
+    const steady = Math.min(1, Math.max(0, 1 - f.sd / (0.08 * f.b)));
+    const conf = Math.min(1, 0.5 * coarse.conf + 0.5 * steady) * Math.min(1, use.length / 8);
+
+    // Temps 1 : DOUM sur 1 et 3, CLAC sur 2 et 4
+    const wK = [1, -0.3, 0.6, -0.3], wC = [-0.4, 1, -0.4, 1];
+    let bestPh = 0, bestS = -Infinity;
+    for (let ph = 0; ph < 4; ph++){
+      let s = 0;
+      pos.forEach((p, i) => { const k = ((i - ph) % 4 + 4) % 4; s += wK[k] * peakNear(kn, p, 2) + wC[k] * peakNear(cn, p, 2) + (k === 0 ? 0.2 * peakNear(en, p, 2) : 0); });
+      if (s > bestS){ bestS = s; bestPh = ph; }
+    }
+    const lastIdx = use.length - 1, last = f.a + f.b * lastIdx;     // dernier temps, recalé sur la droite
+    const bar = (((pos.length - 1) - bestPh) % 4 + 4) % 4;
+    return { bpm, conf, last, bar, coarse, half: f, pos };
+  }
+
+
+
+  /* ---------- Deux sources d'écoute ----------
+     hd  : capture du son des applis (44,1 kHz) — la meilleure, mais certaines applis la bloquent
+     vis : visualiseur Android (mélange final du téléphone, ~20 images/s) — passe là où hd est bloqué */
+  function makeAn(name){
+    return { name, onset: null, fps: 0, env: [], kEnv: [], cEnv: [], tEnd: 0, level: 0, lastSound: -1e9,
+      acc: null, accN: 0, bpm: null, conf: 0, beatT: null, beatBar: 0, periodMs: null,
+      kicks: [], claps: [], kSt: null, cSt: null, buf: null, bufN: 0, t0: null, lastIdx: -1 };
+  }
+  const hd = makeAn('hd'), vis = makeAn('vis'), mic = makeAn('mic');
+  function initAn(a, sr, fps){
+    Object.assign(a, { onset: makeOnset(sr), fps, env: [], kEnv: [], cEnv: [], level: 0, acc: null, accN: 0, bpm: null, conf: 0,
+      beatT: null, periodMs: null, kicks: [], claps: [], kSt: { last: 0, peak: 0, ratio: 0.4 }, cSt: { last: 0, peak: 0, ratio: 0.55 },
+      buf: new Float32Array(HOP), bufN: 0, t0: null, lastIdx: -1 });
+  }
+  function relearn(a){ Object.assign(a, { acc: null, accN: 0, bpm: null, conf: 0, beatT: null, periodMs: null }); }
+
+  function pushEnv(a, tempo, kick, clap, t){
+    a.env.push(tempo); a.kEnv.push(kick); a.cEnv.push(clap);
+    const maxN = Math.round(a.fps * WIN);
+    if (a.env.length > maxN){ const d = a.env.length - maxN; a.env.splice(0, d); a.kEnv.splice(0, d); a.cEnv.splice(0, d); }
+    a.tEnd = t;
+  }
+  function onFrame(a, samples, t){
+    const o = a.onset(samples);
+    pushEnv(a, o.tempo, o.kick, o.clap, t);
+    const r = rms(samples);
+    a.level = Math.max(r, a.level * 0.95);
+    if (r > 0.003) a.lastSound = t;
+    const tHit = t - 1000 / a.fps;
+    if (peakAt(a.kEnv, a.fps, a.kSt, tHit)){ a.kSt.last = tHit; a.kicks.push(tHit); }
+    if (peakAt(a.cEnv, a.fps, a.cSt, tHit) && tHit - a.kSt.last > 70){ a.cSt.last = tHit; a.claps.push(tHit); }
+    const old = t - 5000;
+    while (a.kicks.length && a.kicks[0] < old) a.kicks.shift();
+    while (a.claps.length && a.claps[0] < old) a.claps.shift();
+  }
+
+  /* ---------- Référence du morceau (titre lu dans la notif + fiche Deezer + analyse de l'extrait) ---------- */
+  let meta = null, metaPerm = null, ref = null, refToken = 0;
+  // Deezer ne guide la mesure que si notre analyse de l'extrait le confirme (sinon il peut se tromper)
+  const refTrusted = () => ref && ref.ana && (!ref.bpm || Math.abs(fold(ref.ana, ref.bpm) / ref.bpm - 1) < 0.02) ? ref.ana : null;
+  const center = () => tapBpm() || null;
+  const rangeFor = c => c ? [c / Math.SQRT2, c * Math.SQRT2] : [LO, HI];
+  const fold = (x, r) => { if (!x || !r) return x; while (x / r > 1.41) x /= 2; while (r / x > 1.41) x *= 2; return x; };
+
+  async function analyzePreview(b64, tok){
+    const bin = atob(b64), u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const AC = window.AudioContext || window.webkitAudioContext, ctx = new AC();
+    const buf = await new Promise((res, rej) => { const p = ctx.decodeAudioData(u8.buffer, res, rej); if (p && p.then) p.then(res, rej); });
+    if (ctx.close) ctx.close();
+    const sr = buf.sampleRate, c0 = buf.getChannelData(0), c1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : null;
+    const frames = Math.floor(buf.length / HOP), onset = makeOnset(sr), tmp = new Float32Array(HOP);
+    const env = new Float32Array(frames), k = new Float32Array(frames), c = new Float32Array(frames);
+    for (let f = 0; f < frames; f++){
+      const o = f * HOP;
+      for (let i = 0; i < HOP; i++) tmp[i] = c1 ? (c0[o + i] + c1[o + i]) / 2 : c0[o + i];
+      const r = onset(tmp); env[f] = r.tempo; k[f] = r.kick; c[f] = r.clap;
+      if (f % 1500 === 0){ await new Promise(r2 => setTimeout(r2, 0)); if (tok !== refToken) return null; }
+    }
+    const fps = sr / HOP, r = acfOf(env, fps);
+    if (!r) return null;
+    const [lo, hi] = rangeFor(tapBpm());
+    return analyzeBeats(env, k, c, fps, r.ac, lo, hi).bpm;
+  }
+
+  window.__ttMetaPerm = ok => { metaPerm = !!ok; render(); };
+  window.__ttMeta = (title, artist, pkg, playing) => {
+    const key = artist + '|' + title;
+    if (!meta || meta.key !== key){
+      ref = null; refToken++;
+      relearn(hd); relearn(vis);
+      classify(title, artist, pkg);
+    }
+    meta = { key, title, artist, pkg, playing };
+    render();
+  };
+  window.__ttRef = async o => {
+    const tok = ++refToken;
+    if (!o){ ref = { none: true }; render(); return; }
+    ref = { title: o.title, artist: o.artist, bpm: o.bpm > 0 ? o.bpm : null, ana: null, busy: !!o.preview };
+    render();
+    if (o.preview && NATIVE){
+      try {
+        const b64 = NATIVE.preview();
+        const v = b64 ? await analyzePreview(b64, tok) : null;
+        if (tok !== refToken) return;
+        ref.ana = v || null;
+      } catch (_) {}
+      if (tok === refToken){ ref.busy = false; relearn(hd); relearn(vis); render(); }
+    }
+  };
+
+
+  /* ---------- Région du rap (West / East / South / Midwest / Canada) ----------
+     1) ta liste (artiste → région)  2) MusicBrainz : ville d'origine → État → région
+     3) toi : touche la pastille pour corriger, c'est retenu pour cet artiste. */
+  const REG_DB = {
+    "WEST": "Ice-T|N.W.A|Eazy-E|Ice Cube|Dr. Dre|MC Ren|DJ Yella|The D.O.C.|DJ Quik|Above the Law|WC|Mack 10|Westside Connection|Compton's Most Wanted|King Tee|MC Eiht|Kid Frost|Frost|Cypress Hill|B-Real|Coolio|Tone Loc|Young MC|Snoop Dogg|Snoop Doggy Dogg|Snoop Lion|Warren G|Nate Dogg|Kurupt|Daz Dillinger|Tha Dogg Pound|2Pac|Tupac|Makaveli|The Lady of Rage|Michel'le|Suga Free|Kokane|RBX|Tray Deee|Soopafly|The Dove Shack|The Pharcyde|Freestyle Fellowship|Aceyalone|Ras Kass|Murs|Blu|Abstract Rude|The Game|Xzibit|Crooked I|KXNG Crooked|Stat Quo|Bishop Lamont|Ya Boy|Glasses Malone|Dom Kennedy|Problem|Kendrick Lamar|Nipsey Hussle|YG|ScHoolboy Q|Jay Rock|Ab-Soul|Vince Staples|Roddy Ricch|Tyler, The Creator|Baby Keem|Blxst|Westside Boogie|Jay Worthy|Drakeo the Ruler|03 Greedo|Shoreline Mafia|OhGeesy|Fenix Flexin|Rucci|AzChike|Remble|310babii|G Perico|RJMrLA|Bino Rideaux|Kalan.FrFr|Ray Vaughn|Buddy|Cozz|Reason|SiR|Doja Cat|Saweetie|Kamaiyah|DJ Mustard|Mustard|Ty Dolla $ign|Kid Ink|Tyga|Blueface|Bad Lucc|Too $hort|Too Short|E-40|Spice 1|Mac Mall|Celly Cel|B-Legit|Andre Nickatina|The Click|Digital Underground|MC Hammer|Hammer|Hieroglyphics|Del the Funky Homosapien|Casual|Souls of Mischief|Rappin' 4-Tay|Dru Down|Luniz|Yukmouth|The Jacka|Saafir|The Grouch|Mac Dre|Keak da Sneak|Mistah F.A.B.|The Federation|The Pack|Dem Hoodstarz|J. Stalin|San Quinn|Roach Gigz|Traxamillion|Droop-E|Messy Marv|Husalah|Clyde Carson|JT the Bigga Figga|Philthy Rich|Larry June|SOB x RBE|Nef the Pharaoh|ALLBLACK|LaRussell|G-Eazy|Kehlani|P-Lo|Iamsu!|Sage the Gemini|EBK Jaaybo|Dom Corleo|Seiji Oda|LikyBo|Show Banga|Lil Bean|ZayBang|22nd Jim|Berner|Brotha Lynch Hung|C-Bo|Mozzy|X-Raided|Luni Coleone|Marvaless|DaBoii|MBNel|Sir Mix-a-Lot|Blue Scholars|Shabazz Palaces|Kam|Lil Rob|Planet Asia|Proper Dos|Conejo",
+    "MIDWEST": "Common|Twista|Da Brat|Crucial Conflict|Do or Die|Kanye West|Ye|Lupe Fiasco|Rhymefest|GLC|Bump J|Chief Keef|Lil Durk|King Von|G Herbo|Lil Herb|Polo G|Fredo Santana|Lil Reese|Katie Got Bandz|Sasha Go Hard|Lil Zay Osama|Doodie Lo|FBG Duck|Chance the Rapper|Noname|Saba|Vic Mensa|Juice WRLD|CupcakKe|Valee|Mick Jenkins|Femdot|Joey Purp|Eminem|D12|Royce da 5'9\"|Obie Trice|Proof|J Dilla|Slum Village|Elzhi|Black Milk|Guilty Simpson|Esham|Blade Icewood|Big Sean|Tee Grizzley|Babyface Ray|Icewear Vezzo|Payroll Giovanni|Sada Baby|42 Dugg|Veeze|Danny Brown|Trick Trick|Dej Loaf|Kash Doll|Boldy James|Nelly|St. Lunatics|Murphy Lee|Chingy|J-Kwon|Huey|Smino|Sexyy Red|30 Deep Grimeyy|Jizzle Buckz|Atmosphere|Brother Ali|Eyedea & Abilities|Eyedea|P.O.S|Doomtree|Prof|Lizzo|Yung Gravy|Tech N9ne|Krizz Kaliko|Bone Thugs-N-Harmony|Krayzie Bone|Layzie Bone|Bizzy Bone|Wish Bone|Kid Cudi|Machine Gun Kelly|mgk|Ray Cash|Chip Tha Ripper|King Chip|Freddie Gibbs",
+    "EAST": "DJ Kool Herc|Afrika Bambaataa|Grandmaster Flash & The Furious Five|Grandmaster Flash|Melle Mel|KRS-One|Boogie Down Productions|Slick Rick|Fat Joe|Big Pun|Big Punisher|Cuban Link|Remy Ma|Terror Squad|Kay Flock|Ice Spice|B-Lovee|Sha EK|DThang|Ron Suno|Kenzo B|DD Osama|Sugarhill Ddot|A Boogie wit da Hoodie|Cardi B|The Notorious B.I.G.|Notorious B.I.G.|Biggie|JAY-Z|Big Daddy Kane|M.O.P.|Gang Starr|Jeru the Damaja|Boot Camp Clik|Smif-N-Wessun|Heltah Skeltah|Black Moon|Busta Rhymes|Mos Def|Yasiin Bey|Talib Kweli|Black Star|Fabolous|Papoose|Uncle Murda|Lil' Kim|Foxy Brown|Joe Budden|Maino|Pop Smoke|Fivio Foreign|Sheff G|22Gz|Sleepy Hallow|Bizzy Banks|Rah Swish|Dusty Locane|Coach Da Ghost|41|Kyle Richh|TaTa|Dee Billz|Jenn Carter|Rowdy Rebel|Bobby Shmurda|Run-DMC|LL Cool J|Nas|Mobb Deep|A Tribe Called Quest|Q-Tip|Phife Dawg|Kool G Rap|Pharoahe Monch|Organized Konfusion|Large Professor|50 Cent|G-Unit|Lloyd Banks|Tony Yayo|Ja Rule|Nicki Minaj|A$AP Rocky|A$AP Ferg|A$AP Mob|Capone-N-Noreaga|N.O.R.E.|Noreaga|Cordae|Nawlins|Lola Brooke|Wu-Tang Clan|RZA|GZA|Method Man|Raekwon|Ghostface Killah|Inspectah Deck|U-God|Masta Killa|Ol' Dirty Bastard|Cappadonna|Killah Priest|Killarmy|Big L|Cam'ron|Jim Jones|Juelz Santana|The Diplomats|Dipset|Puff Daddy|Diddy|P. Diddy|Mase|Ma$e|Black Rob|Public Enemy|Chuck D|Flavor Flav|EPMD|De La Soul|Rakim|Eric B. & Rakim|MF DOOM|Aesop Rock|Action Bronson|Prodigy|Havoc|The Roots|Black Thought|Questlove|Beanie Sigel|Freeway|State Property|Meek Mill|Lil Uzi Vert|Eve|Bahamadia|Cassidy|Redman|Naughty by Nature|Queen Latifah|Lauryn Hill|Ms. Lauryn Hill|Fugees|Wyclef Jean|Fetty Wap|Artifacts|Poor Righteous Teachers|Westside Gunn|Conway the Machine|Benny the Butcher|Griselda|Roc Marciano|Ka|Rome Streetz|Wale|GoldLink|Logic|Pusha T|No Malice|Clipse|Oddisee|Rico Nasty|Shy Glizzy|Ed O.G.",
+    "SOUTH": "OutKast|André 3000|Big Boi|Goodie Mob|CeeLo Green|Cee Lo Green|Organized Noize|Killer Mike|Lil Jon & The East Side Boyz|Lil Jon|Ying Yang Twins|Crime Mob|Bone Crusher|Trillville|Pastor Troy|Lil Scrappy|Dem Franchize Boyz|D4L|Soulja Boy|Soulja Boy Tell 'Em|T.I.|Young Jeezy|Jeezy|Gucci Mane|Waka Flocka Flame|Shawty Lo|Future|Young Thug|Migos|Offset|Quavo|Takeoff|21 Savage|Lil Baby|Gunna|Lil Yachty|2 Chainz|Playboi Carti|Young Dro|Rich Homie Quan|Rae Sremmurd|Swae Lee|Slim Jxmmi|Metro Boomin|Zaytoven|Southside|Latto|Mulatto|GloRilla|Doechii|City Girls|JT|Yung Miami|Ken Carson|Destroy Lonely|Homixide Gang|Geto Boys|Scarface|Willie D|Bushwick Bill|UGK|Bun B|Pimp C|Z-Ro|Lil' Keke|Fat Pat|Big Moe|Big Hawk|Big Pokey|E.S.G.|DJ Screw|Screwed Up Click|Swishahouse|Michael 5000 Watts|Slim Thug|Paul Wall|Mike Jones|Chamillionaire|Trae tha Truth|Lil' Flip|Megan Thee Stallion|Travis Scott|Don Toliver|Maxo Kream|Sauce Walka|BigXthaPlug|Three 6 Mafia|Juicy J|DJ Paul|Lord Infamous|Gangsta Boo|Crunchy Black|Koopsta Knicca|Project Pat|8Ball & MJG|Tommy Wright III|La Chat|Playa Fly|Al Kapone|Yo Gotti|Moneybagg Yo|Young Dolph|Key Glock|NLE Choppa|Blac Youngsta|Pooh Shiesty|BlocBoy JB|Duke Deuce|Master P|Silkk the Shocker|C-Murder|Mystikal|Juvenile|Lil Wayne|B.G.|Turk|Hot Boys|Birdman|Mannie Fresh|Big Tymers|Mia X|Magnolia Shorty|Soulja Slim|Curren$y|Kevin Gates|YoungBoy Never Broke Again|NBA YoungBoy|Boosie Badazz|Lil Boosie|Boosie|Rob49|Trick Daddy|Trina|Rick Ross|Flo Rida|Pitbull|Kodak Black|Denzel Curry|XXXTentacion|J. Cole|DaBaby",
+    "CANADA": "Maestro Fresh Wes|Maestro|Michie Mee|Kardinal Offishall|Saukrates|Choclair|k-os|Dream Warriors|Ghetto Concept|Infinite|Rascalz|Drake|The Weeknd|PARTYNEXTDOOR|Tory Lanez|NAV|Belly|Roy Woods|Majid Jordan|dvsn|Jessie Reyez|Daniel Caesar|TOBi|Haviah Mighty|Smoke Dawg|Top5|K Money|Pressa|Lil Berete|Casper TNG|Burna Bandz|Robin Banks|Pengz|3MFrench|Roney|Noah 40 Shebib|40|Boi-1da|WondaGurl|Frank Dukes|Nineteen85|Illangelo|DaHeala|Murda Beatz|Swollen Members|Madchild|Moka Only|Sweatshop Union|Ascendant Vierge|Loud|FouKi|Alaclair Ensemble|Dead Obies|Koriass|Souldia|Rymz|K'naan|Classified|Shad|Alessia Cara|Shawn Mendes"
+  };
+  const REGS = ['WEST', 'EAST', 'SOUTH', 'MIDWEST', 'CANADA', 'AUTRE'];
+  const normA = x => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/\$/g, 's').trim().replace(/^the\s+/, '').replace(/[^a-z0-9]/g, '');
+  const ARTIST_REG = new Map();
+  for (const r in REG_DB) for (const n of REG_DB[r].split('|')){ const k = normA(n); if (k && !ARTIST_REG.has(k)) ARTIST_REG.set(k, r); }
+  const US_REG = {
+    WEST: 'CA WA OR NV AZ UT CO NM ID MT WY AK HI',
+    MIDWEST: 'IL MI MO MN KS OH IN WI IA NE ND SD',
+    EAST: 'NY NJ PA MA CT RI VT NH ME DE MD DC VA',
+    SOUTH: 'GA TX TN LA FL NC SC AL MS AR KY OK WV'
+  };
+  const STATE_REG = {}; for (const r in US_REG) for (const s of US_REG[r].split(' ')) STATE_REG[s] = r;
+  const loadJ = k => { try { return JSON.parse(localStorage.getItem(k)) || {}; } catch (_) { return {}; } };
+  const saveJ = (k, o) => { try { localStorage.setItem(k, JSON.stringify(o)); } catch (_) {} };
+  const regMine = loadJ('tt-reg-moi'), regCache = loadJ('tt-reg-web2');
+  for (const k in regCache){ const v = regCache[k]; if (typeof v !== 'object' || (!v.r && Date.now() - (v.t || 0) > 3 * 864e5)) delete regCache[k]; }
+  let reg = null, regTok = 0;
+
+  function splitArtists(s){
+    const out = [], parts = s.split(/\s*,\s*/).filter(Boolean);
+    for (let i = 0; i < parts.length; i++){
+      if (i + 1 < parts.length) out.push(parts[i] + ', ' + parts[i + 1]);   // « Tyler, The Creator »
+      out.push(parts[i]);
+      parts[i].split(/\s+(?:&|x|×|feat\.?|ft\.?|featuring|with|avec)\s+/i).forEach(p => out.push(p));
+    }
+    return out;
+  }
+  function artistCands(artist, title, pkg){
+    const ch = String(artist || '').replace(/\s*-\s*topic$/i, '').replace(/\s*vevo$/i, '').replace(/\s+(official|music|tv)$/i, '').trim();
+    const m = String(title || '').match(/^(.+?)\s+[-–—]\s+\S/);
+    const left = m ? m[1].trim() : '';
+    const yt = /youtube/i.test(pkg || '');
+    const all = [ch, ...splitArtists(ch)];
+    if (left) all.push(left, ...splitArtists(left));
+    // Pour chercher sur le web : sur YouTube l'artiste est souvent dans le titre (« Artiste - Morceau »)
+    const main = (yt && left ? splitArtists(left) : splitArtists(ch)).find(x => !/,/.test(x)) || ch || left;
+    return { all: all.filter(Boolean), main };
+  }
+
+  let mbNext = 0;
+  async function mbGet(path){
+    const wait = Math.max(0, mbNext - Date.now());
+    mbNext = Date.now() + wait + 1100;                    // MusicBrainz : 1 requête par seconde max
+    if (wait) await new Promise(r => setTimeout(r, wait));
+    const ac = window.AbortController ? new AbortController() : null;
+    const to = setTimeout(() => ac && ac.abort(), 9000);
+    try {
+      const r = await fetch('https://musicbrainz.org/ws/2/' + path, { headers: { Accept: 'application/json' }, signal: ac ? ac.signal : undefined });
+      if (!r.ok) throw new Error('http ' + r.status);
+      return await r.json();
+    } finally { clearTimeout(to); }
+  }
+  function regFromArea(a){
+    const s2 = a && a['iso-3166-2-codes'], s1 = a && a['iso-3166-1-codes'];
+    if (s2 && s2.length){ const [c, st] = s2[0].split('-'); return c === 'US' ? (STATE_REG[st] || 'AUTRE') : c === 'CA' ? 'CANADA' : 'AUTRE'; }
+    if (s1 && s1.length){ return s1.includes('US') ? '' : s1.includes('CA') ? 'CANADA' : 'AUTRE'; }   // '' = USA mais État inconnu
+    return null;
+  }
+  const regFromIso = (code, cc) => {
+    if (code){ const [c, st] = code.split('-'); return c === 'US' ? (STATE_REG[st] || 'AUTRE') : c === 'CA' ? 'CANADA' : 'AUTRE'; }
+    if (cc) return cc === 'US' ? '' : cc === 'CA' ? 'CANADA' : 'AUTRE';
+    return null;
+  };
+  // Remonte d'une ville à son État (ou pays). Renvoie la région, '' (USA sans État) ou null.
+  async function mbArea(area){
+    for (let d = 0; area && area.id && d < 6; d++){
+      let r = regFromArea(area); if (r !== null) return r;
+      const full = await mbGet('area/' + area.id + '?fmt=json&inc=area-rels');
+      r = regFromArea(full); if (r !== null) return r;
+      const up = (full.relations || []).find(x => x.type === 'part of' && x.direction === 'backward' && x.area);
+      area = up && up.area;
+    }
+    return null;
+  }
+  /* MusicBrainz : « zone » = là où l'artiste est basé / identifié (sûr) ; « zone de début » = naissance (incertain) */
+  async function mbRegion(name){
+    const q = 'artist:"' + name.replace(/"/g, '') + '"';
+    const res = await mbGet('artist/?fmt=json&limit=5&query=' + encodeURIComponent(q));
+    const list = res.artists || [], k = normA(name);
+    const a = list.find(x => (x.score || 0) >= 85 && normA(x.name) === k) || list.find(x => (x.aliases || []).some(al => normA(al.name) === k) && (x.score || 0) >= 85);
+    if (!a) return null;
+    if (a.country && a.country !== 'US' && a.country !== 'XW') return { r: a.country === 'CA' ? 'CANADA' : 'AUTRE', sure: true };
+    if (a.area && a.area.type !== 'Country'){ const r = await mbArea(a.area); if (r) return { r, sure: true }; }
+    // Groupe : la zone de début = ville de formation, donc fiable. Personne : ville de naissance, donc incertain.
+    if (a['begin-area']){ const r = await mbArea(a['begin-area']); if (r) return { r, sure: a.type === 'Group' }; }
+    return null;
+  }
+  /* Wikidata : lieu de résidence (P551) > lieu de formation d'un groupe (P740) > lieu de naissance (P19, incertain) */
+  async function wdRegion(name){
+    const n = name.replace(/["\\]/g, '');
+    const sparql = `SELECT ?p ?code ?cc WHERE {
+      VALUES ?lab { "${n}"@en "${n}"@fr }
+      ?item rdfs:label|skos:altLabel ?lab .
+      { ?item wdt:P106 ?occ . VALUES ?occ { wd:Q2252262 wd:Q177220 wd:Q639669 wd:Q183945 wd:Q753110 wd:Q130857 } }
+      UNION { ?item wdt:P31/wdt:P279* wd:Q215380 . }
+      VALUES (?prop ?p) { (wdt:P551 1) (wdt:P740 2) (wdt:P19 3) }
+      ?item ?prop ?place .
+      OPTIONAL { ?place wdt:P131* ?adm . ?adm wdt:P300 ?code . }
+      OPTIONAL { ?place wdt:P17 ?c . ?c wdt:P297 ?cc . }
+    } LIMIT 60`;
+    const ac = window.AbortController ? new AbortController() : null;
+    const to = setTimeout(() => ac && ac.abort(), 12000);
+    let j;
+    try {
+      const r = await fetch('https://query.wikidata.org/sparql?format=json&query=' + encodeURIComponent(sparql),
+        { headers: { Accept: 'application/sparql-results+json' }, signal: ac ? ac.signal : undefined });
+      if (!r.ok) throw new Error('http ' + r.status);
+      j = await r.json();
+    } finally { clearTimeout(to); }
+    let best = null;
+    for (const row of (j.results && j.results.bindings) || []){
+      const pr = +row.p.value, r = regFromIso(row.code && row.code.value, row.cc && row.cc.value);
+      if (r && (!best || pr < best.p)) best = { p: pr, r };
+    }
+    return best ? { r: best.r, sure: best.p < 3 } : null;
+  }
+  /* ---------- Last.fm : tags des auditeurs (« west coast », « bay area », « chicago drill »…) ---------- */
+  let lfKey = ''; try { lfKey = localStorage.getItem('tt-lastfm') || ''; } catch (_) {}
+  const TAGS = {
+    WEST: ['west coast', 'westcoast', 'west coast rap', 'west coast hip hop', 'g funk', 'gfunk', 'bay area', 'bay area rap', 'hyphy',
+      'california', 'cali', 'los angeles', 'la rap', 'compton', 'long beach', 'inglewood', 'oakland', 'san francisco', 'vallejo', 'richmond',
+      'sacramento', 'san diego', 'fresno', 'seattle', 'chicano rap', 'jerk', 'mobb music', 'west coast gangsta rap', 'la', 'sf'],
+    EAST: ['east coast', 'eastcoast', 'east coast rap', 'east coast hip hop', 'new york', 'new york rap', 'nyc', 'ny', 'ny rap', 'brooklyn',
+      'bronx', 'queens', 'harlem', 'staten island', 'ny drill', 'new york drill', 'brooklyn drill', 'bronx drill', 'philly', 'philadelphia',
+      'new jersey', 'nj', 'jersey club', 'griselda', 'buffalo', 'dmv', 'baltimore', 'dc', 'washington dc', 'virginia', 'maryland', 'boston'],
+    SOUTH: ['southern hip hop', 'southern rap', 'southern', 'dirty south', 'south', 'crunk', 'atlanta', 'atl', 'atlanta rap', 'atlanta hip hop',
+      'houston', 'houston rap', 'h town', 'chopped and screwed', 'chopped n screwed', 'screwed', 'memphis', 'memphis rap', 'memphis hip hop',
+      'new orleans', 'nola', 'bounce', 'louisiana', 'baton rouge', 'florida', 'florida rap', 'miami', 'texas', 'texas rap', 'dallas',
+      'tennessee', 'snap', 'north carolina', 'georgia', 'alabama', 'mississippi'],
+    MIDWEST: ['midwest', 'midwest rap', 'midwest hip hop', 'chicago', 'chicago rap', 'chicago hip hop', 'chicago drill', 'chiraq', 'detroit',
+      'detroit rap', 'detroit hip hop', 'michigan', 'flint', 'st louis', 'saint louis', 'minneapolis', 'minnesota', 'kansas city', 'cleveland',
+      'ohio', 'indiana', 'milwaukee', 'gary'],
+    CANADA: ['canadian', 'canada', 'canadian hip hop', 'canadian rap', 'toronto', 'toronto rap', 'toronto drill', 'the 6ix', '6ix', 'montreal',
+      'quebec', 'rap quebecois', 'vancouver', 'ontario'],
+    AUTRE: ['french rap', 'rap francais', 'french', 'france', 'uk', 'uk drill', 'uk rap', 'uk hip hop', 'grime', 'british', 'english',
+      'german rap', 'deutschrap', 'afrobeats', 'afroswing', 'trap latino', 'reggaeton', 'latin trap', 'belgian rap', 'dutch', 'australian']
+  };
+  const TAG_REG = new Map(); for (const r in TAGS) for (const t of TAGS[r]) TAG_REG.set(t, r);
+  const normTag = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[-_'.]/g, ' ').replace(/\s+/g, ' ').trim();
+  async function lfGet(params){
+    const ac = window.AbortController ? new AbortController() : null;
+    const to = setTimeout(() => ac && ac.abort(), 9000);
+    try {
+      const r = await fetch('https://ws.audioscrobbler.com/2.0/?format=json&api_key=' + encodeURIComponent(lfKey) + '&' + params,
+        { signal: ac ? ac.signal : undefined });
+      const j = await r.json();
+      if (j && j.error) { const e = new Error(j.message || 'lastfm'); e.code = j.error; throw e; }
+      return j;
+    } finally { clearTimeout(to); }
+  }
+  async function lfRegion(name){
+    if (!lfKey) return null;
+    const j = await lfGet('method=artist.gettoptags&autocorrect=1&artist=' + encodeURIComponent(name));
+    const tags = (j.toptags && j.toptags.tag) || [];
+    const score = {};
+    for (const t of tags){
+      const r = TAG_REG.get(normTag(t.name));
+      if (r) score[r] = (score[r] || 0) + Math.max(1, +t.count || 0);
+    }
+    const ranked = Object.entries(score).sort((a, b) => b[1] - a[1]);
+    if (!ranked.length) return null;
+    const [r1, s1] = ranked[0], s2 = ranked[1] ? ranked[1][1] : 0;
+    if (s1 < 3) return null;                                   // tag trop marginal
+    return { r: r1, sure: s1 >= 10 && s1 >= 1.6 * s2 };        // net = sûr ; serré = pointillés « ? »
+  }
+  // Ordre : base « où il est basé » d'abord ; le lieu de naissance seulement en dernier recours (pastille en pointillés + « ? »)
+  async function webRegion(name){
+    let lf = null, mb = null, wd = null;
+    try { lf = await lfRegion(name); } catch (_) {}
+    if (lf && lf.sure) return lf;
+    try { mb = await mbRegion(name); } catch (_) {}
+    if (mb && mb.sure) return mb;
+    try { wd = await wdRegion(name); } catch (_) {}
+    if (wd && wd.sure) return wd;
+    return lf || mb || wd || null;
+  }
+
+  function classify(title, artist, pkg){
+    const tok = ++regTok, c = artistCands(artist, title, pkg);
+    let hit = null;
+    for (const x of c.all){ const k = normA(x); if (ARTIST_REG.has(k)){ hit = { k, r: ARTIST_REG.get(k) }; break; } }
+    const key = hit ? hit.k : normA(c.main);
+    if (!key){ reg = null; return; }
+    if (regMine[key]){ reg = { key, r: regMine[key], src: 'toi' }; return; }
+    if (hit){ reg = { key, r: hit.r, src: 'liste' }; return; }
+    const cached = regCache[key];
+    if (cached && typeof cached === 'object'){ reg = { key, r: cached.r || '?', sure: cached.s !== false, src: 'web' }; return; }
+    reg = { key, r: '…', src: 'web' };
+    webRegion(c.main).then(res => {
+      // On garde le « pas trouvé » 3 jours seulement : un nouvel artiste peut être ajouté entre-temps
+      regCache[key] = res ? { r: res.r, s: res.sure } : { r: '', t: Date.now() };
+      saveJ('tt-reg-web2', regCache);
+      if (tok === regTok){ reg = { key, r: res ? res.r : '?', sure: res ? res.sure : true, src: 'web' }; render(); }
+    }).catch(() => { if (tok === regTok){ reg = { key, r: '?', src: 'web' }; render(); } });
+  }
+  const regEl = $('reg');
+  function renderReg(){
+    const unsure = !!(reg && reg.sure === false && reg.src === 'web');
+    const known = reg && REGS.includes(reg.r);
+    const t = meta && reg ? reg.r + (!known ? '' : reg.src === 'toi' ? ' ✎' : unsure ? ' ?' : ' ✓') : '';
+    if (regEl.textContent !== t) regEl.textContent = t;
+    regEl.dataset.r = reg ? reg.r : ''; regEl.dataset.u = unsure ? '1' : '';
+  }
+  const keyBtn = $('keyBtn'), keyOv = $('keyOv'), keyIn = $('keyIn'), keyMsg = $('keyMsg');
+  keyBtn.hidden = !!lfKey;
+  function openKey(){ keyIn.value = lfKey; keyMsg.textContent = ''; keyOv.hidden = false; setTimeout(() => keyIn.focus(), 50); }
+  ['pointerdown', 'click'].forEach(ev => { keyBtn.addEventListener(ev, e => e.stopPropagation()); keyOv.addEventListener(ev, e => e.stopPropagation()); });
+  keyBtn.addEventListener('click', openKey);
+  $('keyCancel').addEventListener('click', () => { keyOv.hidden = true; });
+  $('keySave').addEventListener('click', async () => {
+    const k = keyIn.value.replace(/\s+/g, '');
+    if (!/^[0-9a-f]{32}$/i.test(k)){ keyMsg.textContent = '✗ Ça ne ressemble pas à une clé (32 lettres/chiffres).'; return; }
+    keyMsg.textContent = 'Vérification…';
+    const old = lfKey; lfKey = k;
+    try {
+      await lfGet('method=artist.gettoptags&artist=' + encodeURIComponent('Kendrick Lamar'));
+      try { localStorage.setItem('tt-lastfm', k); } catch (_) {}
+      keyMsg.textContent = '✓ Clé valide, enregistrée.';
+      keyBtn.hidden = true;
+      for (const x in regCache) delete regCache[x];
+      saveJ('tt-reg-web2', regCache);
+      if (meta) classify(meta.title, meta.artist, meta.pkg);
+      render();
+      setTimeout(() => { keyOv.hidden = true; }, 900);
+    } catch (e) {
+      lfKey = old;
+      keyMsg.textContent = e && e.code === 10 ? '✗ Clé refusée par Last.fm.' : '✗ Pas de réponse de Last.fm (réseau ?). Réessaie.';
+    }
+  });
+  let regLp = null, regLpDone = false;
+  regEl.addEventListener('pointerdown', e => {
+    e.stopPropagation(); regLpDone = false; clearTimeout(regLp);
+    regLp = setTimeout(() => { regLpDone = true; openKey(); }, 700);
+  });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => regEl.addEventListener(ev, () => clearTimeout(regLp)));
+  regEl.addEventListener('click', e => {
+    e.stopPropagation();
+    if (regLpDone){ regLpDone = false; return; }
+    if (!reg) return;
+    const i = REGS.indexOf(reg.r), next = i < 0 ? REGS[0] : REGS[i + 1];   // après AUTRE : retour au classement auto
+    if (next){ regMine[reg.key] = next; reg = { key: reg.key, r: next, src: 'toi' }; }
+    else { delete regMine[reg.key]; if (meta) classify(meta.title, meta.artist, meta.pkg); }
+    saveJ('tt-reg-moi', regMine); render();
+  });
+
+  /* ---------- Calcul ---------- */
+  function analyze(a){
+    if (!a.onset || performance.now() - a.lastSound > 2500) return;
+    const r = acfOf(a.env, a.fps);
+    if (!r) return;
+    a.accN++;
+    const w = Math.max(0.2, 1 / a.accN);
+    if (!a.acc || a.acc.length !== r.ac.length) a.acc = Float64Array.from(r.ac);
+    else for (let i = 0; i < r.ac.length; i++) a.acc[i] = a.acc[i] * (1 - w) + r.ac[i] * w;
+    const [lo, hi] = rangeFor(center());
+    const n = a.env.length, res = analyzeBeats(a.env, a.kEnv, a.cEnv, a.fps, a.acc, lo, hi);
+    a.bpm = a.bpm && Math.abs(res.bpm / a.bpm - 1) < 0.02 ? a.bpm * 0.6 + res.bpm * 0.4 : res.bpm;
+    a.conf = res.conf; a.periodMs = 60000 / a.bpm;
+    if (res.last !== null){ a.beatT = a.tEnd - (n - 1 - res.last) / a.fps * 1000; a.beatBar = res.bar; }
+  }
+  function active(){
+    const now = performance.now();
+    if (hd.onset && now - hd.lastSound < 2500) return hd;
+    if (vis.onset && now - vis.lastSound < 2500) return vis;
+    if (mic.onset && now - mic.lastSound < 2500) return mic;
+    return null;
+  }
+  /* Micro automatique : si rien ne joue sur le téléphone pendant 3 s (discothèque, enceinte…),
+     on écoute la salle au micro ; dès que le téléphone rejoue du son, on coupe le micro. */
+  let phoneQuietSince = 0, phoneLoudSince = 0;
+  const bootT = performance.now();
+  function autoMic(){
+    if (!NATIVE || hdPending || performance.now() - bootT < 4000) return;
+    const now = performance.now();
+    const phone = (hd.onset && now - hd.lastSound < 3000) || (vis.onset && now - vis.lastSound < 3000);
+    if (phone){
+      phoneQuietSince = 0;
+      if (micIO){ if (!phoneLoudSince) phoneLoudSince = now; if (now - phoneLoudSince > 5000) stopMic(); }
+    } else {
+      phoneLoudSince = 0;
+      if (!phoneQuietSince) phoneQuietSince = now;
+      if (!micIO && !micBusy && now - phoneQuietSince > 3000) startMicInto(mic);
+    }
+  }
+  setInterval(() => { autoMic(); analyze(hd); analyze(vis); analyze(mic); render(); }, 400);
+
+  /* ---------- Affichage ---------- */
+  function render(){
+    const a = active(), live = a && a.bpm ? a.bpm : null;
+    const rb = ref && (ref.ana || ref.bpm);
+    // Le visualiseur est moins fin : s'il confirme la référence (à 2 % près), on affiche la référence, plus précise
+    const rt = refTrusted();
+    const match = !!(live && rt && Math.abs(fold(live, rt) / rt - 1) < 0.01);
+    const main = live || (rt && (tapBpm() ? fold(rt, tapBpm()) : inRange(rt))) || null;
+    bpmEl.classList.toggle('dim', !live && !!rt);
+    srcEl.textContent = (a === hd ? 'Son HD' : a === vis ? 'Visualiseur' : a === mic ? 'Micro (salle)' : rt ? 'Fiche (pas de son)' : NATIVE ? 'En attente' : 'Navigateur') + ` · ${LO}–${HI}`;
+    if (main){
+      bpmEl.textContent = main.toFixed(1); bpmEl.classList.remove('empty'); styleEl.textContent = styleFor(main);
+      const pc = Math.round((live ? (match ? Math.max(0.85, a.conf) : a.conf) : 0.3) * 100);
+      confBar.style.width = pc + '%';
+      confLbl.textContent = live ? `Fiabilité ${String(pc).padStart(3, '\u2007')} %` : 'Fiabilité –';
+      confBar.style.background = pc >= 70 ? 'var(--screen-ink)' : pc >= 40 ? 'var(--led)' : 'var(--led-accent)';
+    }
+    // Morceau : titre (2 lignes max) puis artistes + fiche Deezer
+    refEl.classList.remove('link');
+    let title = '', artists = '', badge = '';
+    if (metaPerm === false){ title = '▶ Touche ici : activer la reconnaissance du morceau'; refEl.classList.add('link'); }
+    else if (meta){
+      // Retire « (feat. …) » du titre : les artistes sont affichés en dessous
+      title = meta.title.replace(/\s*[\(\[](feat|ft)\.?[^\)\]]*[\)\]]/ig, '').trim() || meta.title;
+      artists = meta.artist || '';
+      if (ref && ref.none) badge = 'pas de fiche';
+      else if (ref){
+        badge = ref.bpm ? `Deezer ${ref.bpm.toFixed(0)}` : 'Deezer ?';
+        if (ref.busy) badge += ' …';
+        else if (ref.ana && !rt) badge += ' (douteux)';
+        else if (match) badge += ' ✓';
+      } else badge = 'recherche…';
+    }
+    if (refT.textContent !== title) refT.textContent = title;
+    refA.textContent = artists; refB.textContent = badge;
+    refEl.style.display = (title || artists || badge) ? '' : 'none';
+    renderReg();
+    showTap(main);
+    // Message
+    if (!NATIVE) return;
+    if (meta && !meta.playing) setMsg('Musique en pause.');
+    else if (a === hd) setMsg(a.bpm ? (a.conf > 0.6 ? 'Mesure fiable (son HD).' : 'Mesure en cours…') : 'J’écoute… quelques secondes.');
+    else if (a === mic) setMsg(a.bpm ? (a.conf > 0.6 ? 'Mesure fiable (micro).' : 'Mesure en cours (micro)…') : 'J’écoute la salle au micro…');
+    else if (a === vis) setMsg(hd.onset ? 'Cette appli bloque le son HD → visualiseur.' : 'Mesure via le visualiseur.');
+    else if (rt) setMsg('Pas de son capté : BPM de la fiche, en gris.', true);
+    else if (hd.onset || vis.onset) setMsg('Aucun son capté : lance la musique.', true);
+  }
+
+  /* ---------- Capture HD (appli Android) ---------- */
+  let hdPending = false;
+  function startNative(){
+    if (hdPending || hd.onset) return;
+    hdPending = true;
+    setMsg('Autorise la capture : « Tout l’écran » puis Démarrer.');
+    NATIVE.start();
+  }
+  window.__ttCaptureStarted = sr => { hdPending = false; initAn(hd, sr, sr / HOP); };
+  window.__ttPcm = b64 => {
+    if (!hd.onset) return;
+    const bin = atob(b64), n = bin.length >> 1, buf = hd.buf, t = performance.now();
+    for (let i = 0; i < n; i++){
+      let v = bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8);
+      if (v >= 32768) v -= 65536;
+      buf[hd.bufN++] = v / 32768;
+      if (hd.bufN === HOP){ onFrame(hd, buf, t); hd.bufN = 0; }
+    }
+  };
+  window.__ttCaptureError = m => { hdPending = false; hd.onset = null; setMsg(m, true); };
+  window.__ttCaptureStopped = () => { hdPending = false; hd.onset = null; render(); };
+
+  /* ---------- Visualiseur ---------- */
+  let visBuf = null;
+  window.__ttVisState = ok => { if (!ok) vis.onset = null; };
+  window.__ttVis = (b64, srMilli) => {
+    const bin = atob(b64), n = bin.length, t = performance.now();
+    if (!vis.onset){ initAn(vis, (srMilli || 44100000) / 1000, VIS_FPS); }
+    if (!visBuf || visBuf.length !== n) visBuf = new Float32Array(n);
+    for (let i = 0; i < n; i++) visBuf[i] = ((bin.charCodeAt(i) & 255) - 128) / 128;
+    // Grille régulière à 20 images/s, quels que soient les à-coups des rappels
+    if (vis.t0 === null){ vis.t0 = t; vis.lastIdx = -1; }
+    let idx = Math.round((t - vis.t0) * VIS_FPS / 1000);
+    if (idx <= vis.lastIdx) return;
+    if (idx - vis.lastIdx > 10){ vis.lastIdx = idx - 1; }
+    for (let j = vis.lastIdx + 1; j < idx; j++) pushEnv(vis, 0, 0, 0, vis.t0 + j * 1000 / VIS_FPS);
+    vis.lastIdx = idx;
+    onFrame(vis, visBuf, t);
+  };
+
+  /* ---------- Repli navigateur : micro ---------- */
+  let micBusy = false;
+  let micIO = null;
+  function stopMic(){
+    if (!micIO) return;
+    try { micIO.proc.onaudioprocess = null; micIO.stream.getTracks().forEach(t => t.stop()); if (micIO.ctx.close) micIO.ctx.close(); } catch (_) {}
+    micIO = null; mic.onset = null;
+  }
+  function startMic(){ return startMicInto(hd); }
+  async function startMicInto(target){
+    if ((target === hd && hd.onset) || micBusy || micIO) return;
+    if (!/^https?:$/.test(location.protocol) || !navigator.mediaDevices){ setMsg('Ici : tap uniquement. Le casque marche dans l’appli.', true); return; }
+    micBusy = true;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+      const AC = window.AudioContext || window.webkitAudioContext, ctx = new AC();
+      try { await ctx.resume(); } catch (_) {}
+      const src = ctx.createMediaStreamSource(stream), proc = ctx.createScriptProcessor(HOP, 1, 1), mute = ctx.createGain();
+      mute.gain.value = 0; src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
+      initAn(target, ctx.sampleRate, ctx.sampleRate / HOP);
+      proc.onaudioprocess = e => onFrame(target, e.inputBuffer.getChannelData(0), performance.now());
+      micIO = { ctx, stream, proc };
+      if (target === hd) setMsg('J’écoute au micro…');
+    } catch (e){ if (target === hd) setMsg('Micro refusé.', true); }
+    micBusy = false;
+  }
+
+  // Appui long sur l'afficheur : change la plage de tempo
+  let lpTimer = null, lpDone = false;
+  const scr = $('screen');
+  scr.addEventListener('pointerdown', () => { lpDone = false; clearTimeout(lpTimer); lpTimer = setTimeout(() => {
+    lpDone = true; rIdx = (rIdx + 1) % RANGES.length; [LO, HI] = RANGES[rIdx];
+    try { localStorage.setItem('tt-range', String(rIdx)); } catch (_) {}
+    relearn(hd); relearn(vis); lastMsg = '';
+    msgEl.textContent = `Plage ${LO}–${HI} BPM (${RANGES[rIdx][2]})`; msgEl.classList.remove('warn'); lastMsg = msgEl.textContent; holdUntil = performance.now() + 2500;
+    if (navigator.vibrate) navigator.vibrate(30);
+    render();
+  }, 600); });
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => scr.addEventListener(ev, () => clearTimeout(lpTimer)));
+  scr.addEventListener('click', () => { if (lpDone){ lpDone = false; return; } if (hd.onset) return; NATIVE ? startNative() : startMic(); });
+  refEl.addEventListener('click', e => { if (metaPerm === false && NATIVE){ e.stopPropagation(); NATIVE.notifSettings(); } });
+
+  /* ---------- Tap ---------- */
+  let taps = [];
+  const pad = $('pad');
+  function tapBpm(){
+    if (taps.length < 2 || performance.now() - taps[taps.length - 1] > 8000) return null;
+    const t = taps.slice(-12), n = t.length, mi = (n - 1) / 2, mt = t.reduce((a, b) => a + b, 0) / n;
+    let num = 0, den = 0;
+    for (let i = 0; i < n; i++){ num += (i - mi) * (t[i] - mt); den += (i - mi) ** 2; }
+    return 60000 / (num / den);
+  }
+  function showTap(main){
+    const tb = tapBpm();
+    if (!tb){ tapTxt.textContent = taps.length ? '' : 'Tape pour comparer'; gapTxt.textContent = ''; return; }
+    tapTxt.textContent = `Ton tap ${tb.toFixed(1)}`;
+    if (main){ const d = tb - main; gapTxt.textContent = Math.abs(d) < 0.5 ? 'pile dessus ✓' : `écart ${d > 0 ? '+' : ''}${d.toFixed(1)}`; }
+  }
+  pad.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    const now = performance.now();
+    if (taps.length && now - taps[taps.length - 1] > 2000) taps = [];
+    taps.push(now); if (taps.length > 16) taps.shift();
+    pad.classList.add('hit'); setTimeout(() => pad.classList.remove('hit'), 90);
+    const a = active();
+    if (!(a && a.bpm)){ const tb = tapBpm(); if (tb){ bpmEl.textContent = tb.toFixed(1); bpmEl.classList.remove('empty'); styleEl.textContent = styleFor(tb); } }
+    showTap(a && a.bpm);
+    if (!hd.onset && !NATIVE) startMic();
+  });
+
+  /* ---------- Afficheur graphique ---------- */
+  function size(){
+    const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
+    if (!w || !h) return null;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)){ canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+    g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+    return { w, h };
+  }
+  let lastK = null;
+  function draw(){
+    requestAnimationFrame(draw);
+    const s = size(); if (!s) return;
+    const { w, h } = s, c = css(), a = active();
+    const ink = c.getPropertyValue('--screen-ink').trim(), dim = c.getPropertyValue('--screen-dim').trim();
+    const grid = c.getPropertyValue('--screen-grid').trim(), led = c.getPropertyValue('--led').trim();
+    const hot = c.getPropertyValue('--led-accent').trim(), clap = c.getPropertyValue('--clap').trim();
+    const SPAN = 4000, meterW = 6, gw = w - meterW - 6, now = performance.now();
+    const tEnd = a ? Math.max(a.tEnd, now - 120) : now, t0 = tEnd - SPAN, X = t => (t - t0) / SPAN * gw;
+    g.strokeStyle = grid; g.lineWidth = 1; g.beginPath(); g.moveTo(0, h - .5); g.lineTo(gw, h - .5); g.stroke();
+    // Grille des temps : celle de la source active, sinon celle de la référence (sans phase)
+    if (a && a.periodMs && a.beatT !== null){
+      const p = a.periodMs;
+      for (let k = Math.ceil((t0 - a.beatT) / p); a.beatT + k * p <= tEnd; k++){
+        const x = Math.round(X(a.beatT + k * p)) + .5, down = ((a.beatBar + k) % 4 + 4) % 4 === 0;
+        g.strokeStyle = down ? hot : led; g.globalAlpha = down ? .9 : .5; g.lineWidth = down ? 2.5 : 1.5;
+        g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+      }
+      g.globalAlpha = 1;
+      const k = Math.floor((now - a.beatT) / p);
+      if (lastK !== null && k !== lastK){
+        const el = leds[((a.beatBar + k) % 4 + 4) % 4];
+        el.classList.add('on'); setTimeout(() => el.classList.remove('on'), Math.min(120, p * .4));
+      }
+      lastK = k;
+    } else lastK = null;
+    if (a && a.env.length){
+      const show = Math.min(a.env.length, Math.round(a.fps * SPAN / 1000)), seg = a.env.slice(a.env.length - show);
+      const sorted = Array.from(seg).sort((x, y) => x - y), mx = Math.max(1e-3, sorted[Math.floor(sorted.length * 0.98)] || 0);
+      const bw = Math.max(1, gw / (a.fps * SPAN / 1000) - (a === vis ? 1 : 0));
+      g.fillStyle = ink;
+      seg.forEach((v, i) => { const x = X(a.tEnd - (show - 1 - i) * 1000 / a.fps), bh = Math.min(1, v / mx) * (h - 14); if (bh > .5) g.fillRect(x, h - bh, bw, bh); });
+      g.fillStyle = hot; for (const t of a.kicks) if (t >= t0){ g.beginPath(); g.arc(X(t), h - 5, 3.5, 0, 7); g.fill(); }
+      g.fillStyle = clap; for (const t of a.claps) if (t >= t0){ const x = X(t); g.beginPath(); g.moveTo(x, 2); g.lineTo(x - 4, 9); g.lineTo(x + 4, 9); g.fill(); }
+    } else {
+      g.fillStyle = dim; g.font = '500 12px ' + c.getPropertyValue('--font');
+      g.fillText('En attente du son…', 6, h / 2);
+    }
+    g.strokeStyle = '#FFFFFF'; g.globalAlpha = .85; g.lineWidth = 2;
+    for (const t of taps) if (t >= t0){ const x = Math.round(X(t)) + .5; g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h * .35); g.stroke(); }
+    g.globalAlpha = 1;
+    const lv = a ? Math.min(1, Math.log1p(a.level * 300) / Math.log1p(300)) : 0;
+    g.fillStyle = grid; g.fillRect(w - meterW, 0, meterW, h);
+    g.fillStyle = lv > .92 ? hot : ink; g.fillRect(w - meterW, h - lv * h, meterW, lv * h);
+  }
+  requestAnimationFrame(draw);
+
+  /* ---------- Démarrage automatique ---------- */
+  if (NATIVE) setTimeout(startNative, 400);
+  else { setMsg('Navigateur : touche l’afficheur ou le pad pour le micro.'); showTap(null); }
+})();
+</script>
+</body>
+</html>
